@@ -1,0 +1,8 @@
+db_config.php
+uploads/
+*.log
+.env
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/

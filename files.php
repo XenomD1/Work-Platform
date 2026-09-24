@@ -8,6 +8,16 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "announcement_helpers.php";
+require_once "file_access_helpers.php";
+
+const PREVIEWABLE_FILE_TYPES = [
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+];
 
 $user_id = (int)$_SESSION["user_id"];
 
@@ -27,7 +37,7 @@ if (!$current_user) {
 }
 
 $role = $current_user["role"];
-$user_department = $current_user["department"];
+$user_department = $current_user["department"] ?? "";
 $current_full_name = trim(
     $current_user["first_name"] . " " . $current_user["last_name"]
 );
@@ -107,234 +117,6 @@ if (!$can_create_folder) {
     }
 }
 
-function canAccessLocation(
-    $conn,
-    $location_type,
-    $location_id,
-    $user_id,
-    $role,
-    $user_department,
-    $current_full_name
-) {
-    if ($location_type === "Organization") {
-        return true;
-    }
-
-    if ($role === "Administrator") {
-        return true;
-    }
-
-    if ($location_type === "Department") {
-        return (string)$location_id === (string)$user_department;
-    }
-
-    if ($location_type === "Project") {
-        $stmt = $conn->prepare("
-            SELECT department, manager_id
-            FROM projects
-            WHERE id = ?
-        ");
-        $stmt->bind_param("i", $location_id);
-        $stmt->execute();
-        $project = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$project) return false;
-
-        if (
-            ($role === "Manager" || $role === "IT Administrator")
-            && $project["department"] === $user_department
-        ) {
-            return true;
-        }
-
-        if (
-            $project["manager_id"] !== null
-            && (int)$project["manager_id"] === $user_id
-        ) {
-            return true;
-        }
-
-        $member_stmt = $conn->prepare("
-            SELECT COUNT(*) AS total
-            FROM teams t
-            INNER JOIN team_members tm ON tm.team_id = t.id
-            WHERE t.project_id = ?
-              AND tm.user_id = ?
-        ");
-        $member_stmt->bind_param("ii", $location_id, $user_id);
-        $member_stmt->execute();
-        $total = (int)$member_stmt->get_result()->fetch_assoc()["total"];
-        $member_stmt->close();
-
-        return $total > 0;
-    }
-
-    if ($location_type === "Task") {
-        $stmt = $conn->prepare("
-            SELECT
-                t.project_id,
-                p.department,
-                p.manager_id
-            FROM tasks t
-            INNER JOIN projects p ON p.id = t.project_id
-            WHERE t.id = ?
-        ");
-        $stmt->bind_param("i", $location_id);
-        $stmt->execute();
-        $task = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$task) return false;
-
-        if (
-            ($role === "Manager" || $role === "IT Administrator")
-            && $task["department"] === $user_department
-        ) {
-            return true;
-        }
-
-        if (
-            $task["manager_id"] !== null
-            && (int)$task["manager_id"] === $user_id
-        ) {
-            return true;
-        }
-
-        $assign_stmt = $conn->prepare("
-            SELECT COUNT(*) AS total
-            FROM task_assignments
-            WHERE task_id = ?
-              AND user_id = ?
-        ");
-        $assign_stmt->bind_param("ii", $location_id, $user_id);
-        $assign_stmt->execute();
-        $total = (int)$assign_stmt->get_result()->fetch_assoc()["total"];
-        $assign_stmt->close();
-
-        return $total > 0;
-    }
-
-    if ($location_type === "Team") {
-        $stmt = $conn->prepare("
-            SELECT
-                t.team_lead_id,
-                p.department,
-                p.manager_id
-            FROM teams t
-            INNER JOIN projects p ON p.id = t.project_id
-            WHERE t.id = ?
-        ");
-        $stmt->bind_param("i", $location_id);
-        $stmt->execute();
-        $team = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$team) return false;
-
-        if ((int)$team["team_lead_id"] === $user_id) {
-            return true;
-        }
-
-        if (
-            ($role === "Manager" || $role === "IT Administrator")
-            && $team["department"] === $user_department
-        ) {
-            return true;
-        }
-
-        if (
-            $team["manager_id"] !== null
-            && (int)$team["manager_id"] === $user_id
-        ) {
-            return true;
-        }
-
-        $member_stmt = $conn->prepare("
-            SELECT COUNT(*) AS total
-            FROM team_members
-            WHERE team_id = ?
-              AND user_id = ?
-        ");
-        $member_stmt->bind_param("ii", $location_id, $user_id);
-        $member_stmt->execute();
-        $total = (int)$member_stmt->get_result()->fetch_assoc()["total"];
-        $member_stmt->close();
-
-        return $total > 0;
-    }
-
-    if ($location_type === "Event") {
-        $stmt = $conn->prepare("
-            SELECT department, type, organizer
-            FROM events
-            WHERE id = ?
-              AND deleted = 0
-        ");
-        $stmt->bind_param("i", $location_id);
-        $stmt->execute();
-        $event = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$event) return false;
-
-        if ($event["type"] === "Organization-Wide Event") return true;
-        if ((int)$event["organizer"] === $user_id) return true;
-        if ($event["department"] === $user_department) return true;
-
-        $attendee_stmt = $conn->prepare("
-            SELECT COUNT(*) AS total
-            FROM event_attendees
-            WHERE event_id = ?
-              AND user_id = ?
-        ");
-        $attendee_stmt->bind_param("ii", $location_id, $user_id);
-        $attendee_stmt->execute();
-        $total = (int)$attendee_stmt->get_result()->fetch_assoc()["total"];
-        $attendee_stmt->close();
-
-        return $total > 0;
-    }
-
-    if ($location_type === "Training") {
-        $stmt = $conn->prepare("
-            SELECT department, organizer
-            FROM training
-            WHERE id = ?
-              AND deleted = 0
-        ");
-        $stmt->bind_param("i", $location_id);
-        $stmt->execute();
-        $training = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$training) return false;
-
-        if ((int)$training["organizer"] === $user_id) return true;
-        if ($training["department"] === $user_department) return true;
-
-        $attendee_stmt = $conn->prepare("
-            SELECT COUNT(*) AS total
-            FROM training_attendees
-            WHERE training_id = ?
-              AND (user_id = ? OR department = ?)
-        ");
-        $attendee_stmt->bind_param(
-            "iis",
-            $location_id,
-            $user_id,
-            $user_department
-        );
-        $attendee_stmt->execute();
-        $total = (int)$attendee_stmt->get_result()->fetch_assoc()["total"];
-        $attendee_stmt->close();
-
-        return $total > 0;
-    }
-
-    return false;
-}
-
 $sql = "
     SELECT
         f.id,
@@ -370,14 +152,13 @@ if ($result) {
     while ($file = $result->fetch_assoc()) {
 
         if (
-            !canAccessLocation(
+            !canAccessFileLocation(
                 $conn,
                 $file["location_type"],
                 $file["location_id"],
                 $user_id,
                 $role,
-                $user_department,
-                $current_full_name
+                $user_department
             )
         ) {
             continue;
@@ -442,7 +223,7 @@ function formatFileSize($bytes) {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Files</title>
 
-<link rel="stylesheet" href="app.css?v=9">
+<link rel="stylesheet" href="app.css?v=22">
 
 </head>
 <body>
@@ -469,11 +250,17 @@ function formatFileSize($bytes) {
         <div class="sidebar-item">
             <a href="teams.php">Teams</a>
         </div>
+        <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
         <div class="sidebar-item active">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -482,16 +269,31 @@ function formatFileSize($bytes) {
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (($_SESSION["role"] ?? "") === "Administrator"): ?>
+        <?php if (canPostAnnouncements($role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($role)): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
         </div>
         <?php endif; ?>
 
-        <div class="sidebar-bottom">
+        <?php if ($role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
+        </div>
+        <?php endif; ?>
+
+<div class="sidebar-bottom">
         <div class="sidebar-item">
             <a href="account.php">Account</a>
         </div>
@@ -645,6 +447,16 @@ function formatFileSize($bytes) {
                             VIEW
                         </a>
 
+                        <?php if (in_array($file["file_type"] ?? "", PREVIEWABLE_FILE_TYPES, true)): ?>
+                            <button
+                                type="button"
+                                class="button"
+                                onclick="openFilePreview('preview_file.php?id=<?php echo (int)$file["id"]; ?>', '<?php echo e($file["file_type"]); ?>', '<?php echo e($file["name"]); ?>')"
+                            >
+                                PREVIEW
+                            </button>
+                        <?php endif; ?>
+
                         <a
                             class="button"
                             href="download_file.php?id=<?php echo (int)$file["id"]; ?>"
@@ -666,6 +478,60 @@ function formatFileSize($bytes) {
 </div>
 
 </div>
+
+<!-- FILE PREVIEW MODAL -->
+<div id="file-preview-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;align-items:center;justify-content:center;padding:30px;">
+    <div style="background:#fff;border-radius:6px;max-width:90vw;max-height:90vh;width:900px;display:flex;flex-direction:column;overflow:hidden;">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(0,0,0,.12);">
+            <strong id="file-preview-title">Preview</strong>
+            <button type="button" class="button" onclick="closeFilePreview()">CLOSE</button>
+        </div>
+        <div id="file-preview-body" style="flex:1;overflow:auto;background:#2b2b2b;display:flex;align-items:center;justify-content:center;min-height:400px;">
+        </div>
+    </div>
+</div>
+
+<script>
+function openFilePreview(url, fileType, name) {
+    var overlay = document.getElementById("file-preview-overlay");
+    var body = document.getElementById("file-preview-body");
+    var title = document.getElementById("file-preview-title");
+
+    title.textContent = "Preview - " + name;
+    body.innerHTML = "";
+
+    if (fileType === "application/pdf") {
+        var iframe = document.createElement("iframe");
+        iframe.src = url;
+        iframe.style.width = "100%";
+        iframe.style.height = "80vh";
+        iframe.style.border = "none";
+        body.appendChild(iframe);
+    } else {
+        var img = document.createElement("img");
+        img.src = url;
+        img.style.maxWidth = "100%";
+        img.style.maxHeight = "80vh";
+        img.style.objectFit = "contain";
+        body.appendChild(img);
+    }
+
+    overlay.style.display = "flex";
+}
+
+function closeFilePreview() {
+    var overlay = document.getElementById("file-preview-overlay");
+    var body = document.getElementById("file-preview-body");
+    overlay.style.display = "none";
+    body.innerHTML = "";
+}
+
+document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+        closeFilePreview();
+    }
+});
+</script>
 
 </body>
 </html>

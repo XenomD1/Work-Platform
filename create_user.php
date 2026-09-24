@@ -8,23 +8,31 @@ if (!isset($_SESSION["user_id"])) {
 
 require_once "db.php";
 require_once "role_helpers.php";
+require_once "csrf_helpers.php";
+require_once "announcement_helpers.php";
 
-if (!isAnyAdministrator($_SESSION["role"])) {
-    die("Access denied.");
-}
-
-$current_role = $_SESSION["role"];
 $current_user_id = (int)$_SESSION["user_id"];
 
 $current_user_stmt = $conn->prepare("
-    SELECT department
+    SELECT role, department
     FROM users
-    WHERE id = ?
+    WHERE id = ? AND active = 1
 ");
 $current_user_stmt->bind_param("i", $current_user_id);
 $current_user_stmt->execute();
 $current_user_row = $current_user_stmt->get_result()->fetch_assoc();
 $current_user_stmt->close();
+
+if (!$current_user_row) {
+    header("Location: login.php");
+    exit;
+}
+
+$current_role = $current_user_row["role"];
+
+if (!isAnyAdministrator($current_role)) {
+    die("Access denied.");
+}
 
 $current_user_department = $current_user_row["department"] ?? "";
 
@@ -43,6 +51,8 @@ $message = "";
 $message_type = "";
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+
+    requireValidCsrfToken();
 
     $username = trim($_POST["username"] ?? "");
     $password = $_POST["password"] ?? "";
@@ -153,7 +163,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     <meta charset="UTF-8">
     <title>Create User</title>
 
-    <link rel="stylesheet" href="app.css?v=19">
+    <link rel="stylesheet" href="app.css?v=22">
 </head>
 
 <body>
@@ -181,10 +191,16 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -193,12 +209,27 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
+
+        <?php if (canPostAnnouncements($current_role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
 
         <div class="sidebar-item active">
             <a href="users.php">User Management</a>
         </div>
+
+        <?php if ($current_role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
+        </div>
+        <?php endif; ?>
 
         <div class="sidebar-bottom">
             <div class="sidebar-item"><a href="account.php">Account</a></div>
@@ -224,6 +255,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     <div class="card">
 
     <form method="POST">
+        <?= csrfField() ?>
 
         <div class="form-row">
             <label>Username *</label>

@@ -10,11 +10,32 @@ if (!isset($_SESSION["user_id"])) {
 require "db.php";
 require_once "role_helpers.php";
 require_once "notification_helpers.php";
+require_once "csrf_helpers.php";
+require_once "announcement_helpers.php";
 
 $current_user_id = (int)$_SESSION["user_id"];
 
-if (!isAnyAdministrator($_SESSION["role"])) {
-    die("Access denied.");
+$me_stmt = $conn->prepare("
+    SELECT role, department
+    FROM users
+    WHERE id = ? AND active = 1
+");
+$me_stmt->bind_param("i", $current_user_id);
+$me_stmt->execute();
+$me = $me_stmt->get_result()->fetch_assoc();
+$me_stmt->close();
+
+if (!$me) {
+    header("Location: login.php");
+    exit;
+}
+
+$current_role = $me["role"];
+$current_department = $me["department"] ?? "";
+
+if (!isAnyAdministrator($current_role)) {
+    http_response_code(403);
+    exit("Access denied.");
 }
 
 $project_id = (int)($_GET["project"] ?? $_GET["id"] ?? $_POST["project_id"] ?? 0);
@@ -64,12 +85,13 @@ if (!$project) {
 
 if (
     !canAdministerDepartment(
-        $_SESSION["role"],
-        $_SESSION["department"] ?? "",
+        $current_role,
+        $current_department,
         $project["department"]
     )
 ) {
-    die("Access denied.");
+    http_response_code(403);
+    exit("Access denied.");
 }
 
 $project["objectives"] = [];
@@ -130,6 +152,7 @@ if (
     $_SERVER["REQUEST_METHOD"] === "POST"
     && isset($_POST["delete_project"])
 ) {
+    requireValidCsrfToken();
     $confirmed = isset($_POST["confirm_delete"]);
 
     if (!$confirmed) {
@@ -154,14 +177,16 @@ if (
     && !isset($_POST["delete_project"])
 ) {
 
+    requireValidCsrfToken();
+
     $name = trim($_POST["name"] ?? "");
     $type = trim($_POST["type"] ?? "");
     $department = trim($_POST["department"] ?? "");
     $description = trim($_POST["description"] ?? "");
 
-    if ($_SESSION["role"] === "IT Administrator") {
+    if ($current_role === "IT Administrator") {
         // Cannot move a project out of the department they administer.
-        $department = $_SESSION["department"] ?? "";
+        $department = $current_department;
     }
 
     $start_date = $_POST["start_date"] ?? "";
@@ -464,7 +489,7 @@ if (
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Edit Project</title>
-<link rel="stylesheet" href="app.css?v=9">
+<link rel="stylesheet" href="app.css?v=22">
 </head>
 <body>
 
@@ -478,14 +503,25 @@ if (
         <div class="sidebar-item"><a href="calendar.php">Calendar</a></div>
         <div class="sidebar-item"><a href="events.php">Meetings / Events</a></div>
         <div class="sidebar-item"><a href="teams.php">Teams</a></div>
+        <div class="sidebar-item"><a href="org_chart.php">Organization Chart</a></div>
         <div class="sidebar-item"><a href="files.php">Files</a></div>
         <div class="sidebar-item"><a href="reports.php">Reports</a></div>
+        <div class="sidebar-item"><a href="analytics.php">Analytics</a></div>
         <div class="sidebar-item"><a href="training.php">Training</a></div>
         <div class="sidebar-item"><a href="time_off.php">Time Off</a></div>
+        <div class="sidebar-item"><a href="timesheets.php">Timesheets</a></div>
         <div class="sidebar-item"><a href="notifications.php">Notifications</a></div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($current_role)): ?>
+        <div class="sidebar-item"><a href="announcements.php">Announcements</a></div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($current_role)): ?>
         <div class="sidebar-item"><a href="users.php">User Management</a></div>
+        <?php endif; ?>
+
+        <?php if ($current_role === "Administrator"): ?>
+        <div class="sidebar-item"><a href="roles.php">Roles &amp; Permissions</a></div>
         <?php endif; ?>
 
         <div class="sidebar-bottom">
@@ -511,6 +547,8 @@ if (
 
             <form method="POST">
 
+                <?= csrfField() ?>
+
                 <input type="hidden" name="project_id" value="<?php echo (int)$project_id; ?>">
 
                 <div class="card">
@@ -533,7 +571,7 @@ if (
                                 type="text"
                                 name="department"
                                 value="<?php echo e($project["department"]); ?>"
-                                <?php echo $_SESSION["role"] === "IT Administrator" ? "readonly" : ""; ?>
+                                <?php echo $current_role === "IT Administrator" ? "readonly" : ""; ?>
                             >
                         </div>
 
@@ -621,16 +659,19 @@ if (
 
                         <div class="form-row full">
                             <label>Milestones</label>
-                            <div class="milestone-edit-list">
+                            <div class="milestone-edit-list" id="milestone-edit-list">
                                 <?php foreach ($project["milestones"] as $milestone): ?>
-                                    <div class="milestone-edit-row">
+                                    <div class="milestone-edit-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
                                         <input type="text" name="milestone_name[]" value="<?php echo e($milestone["milestone"]); ?>" placeholder="Milestone">
                                         <input type="date" name="milestone_due[]" value="<?php echo e($milestone["due_date"]); ?>">
                                         <input type="text" name="milestone_status[]" value="<?php echo e($milestone["status"]); ?>" placeholder="Status">
                                         <input type="number" name="milestone_completion[]" value="<?php echo e($milestone["completion"]); ?>" min="0" max="100" step="0.01" placeholder="Completion %">
+                                        <button type="button" class="button" onclick="this.closest('.milestone-edit-row').remove()">REMOVE</button>
                                     </div>
                                 <?php endforeach; ?>
                             </div>
+                            <button type="button" class="button" onclick="addMilestoneRow()">+ ADD MILESTONE</button>
+                            <div class="help">A blank milestone name is dropped when you save. Removing a row here and saving removes it permanently.</div>
                         </div>
 
                         <div class="form-row">
@@ -675,6 +716,25 @@ if (
     </main>
 
 </div>
+
+<script>
+function addMilestoneRow() {
+    var list = document.getElementById("milestone-edit-list");
+    var row = document.createElement("div");
+    row.className = "milestone-edit-row";
+    row.style.display = "flex";
+    row.style.gap = "8px";
+    row.style.alignItems = "center";
+    row.style.marginBottom = "8px";
+    row.innerHTML =
+        '<input type="text" name="milestone_name[]" placeholder="Milestone">' +
+        '<input type="date" name="milestone_due[]">' +
+        '<input type="text" name="milestone_status[]" placeholder="Status">' +
+        '<input type="number" name="milestone_completion[]" min="0" max="100" step="0.01" placeholder="Completion %">' +
+        '<button type="button" class="button" onclick="this.closest(\'.milestone-edit-row\').remove()">REMOVE</button>';
+    list.appendChild(row);
+}
+</script>
 
 </body>
 </html>

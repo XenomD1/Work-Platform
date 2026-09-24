@@ -2566,3 +2566,213 @@ body.login-page {
         overflow-x: auto;
     }
 }
+
+/* ---------------------------------------------------------
+   NEW FEATURES: global search, activity log, comments,
+   task checklist
+--------------------------------------------------------- */
+
+.feature-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr auto;
+    gap: 12px;
+    align-items: end;
+}
+
+@media (max-width: 800px) {
+    .feature-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.result-card {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+}
+
+.result-type {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--gold-hover);
+}
+
+.result-title {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 600;
+    margin: 5px 0;
+    color: var(--ink);
+}
+
+.result-detail {
+    line-height: 1.5;
+    color: var(--slate);
+}
+
+.activity-row {
+    display: grid;
+    grid-template-columns: 180px 1fr 120px;
+    gap: 18px;
+    padding: 15px 0;
+    border-bottom: 1px solid var(--line-soft);
+    align-items: center;
+}
+
+.activity-row:last-child {
+    border-bottom: none;
+}
+
+.activity-user {
+    font-weight: 600;
+    color: var(--ink);
+}
+
+.activity-meta {
+    font-size: 12px;
+    text-transform: uppercase;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: var(--gold-hover);
+    margin-bottom: 3px;
+}
+
+@media (max-width: 800px) {
+    .activity-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+.comment {
+    padding: 14px 0;
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.comment:last-child {
+    border-bottom: none;
+}
+
+.comment-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 15px;
+    font-weight: 600;
+    color: var(--ink);
+    font-size: 13.5px;
+}
+
+.comment-text {
+    white-space: pre-wrap;
+    margin-top: 8px;
+    line-height: 1.5;
+    color: var(--ink);
+}
+
+.mention-help {
+    font-size: 12px;
+    color: var(--slate-dim);
+    margin-top: 6px;
+}
+
+.checklist-form {
+    display: flex;
+    gap: 10px;
+    align-items: end;
+    margin-bottom: 18px;
+}
+
+.checklist-form-field {
+    flex: 1;
+}
+
+.checklist-card {
+    margin-top: 24px;
+}
+
+.checklist-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.checklist-row:last-child {
+    border-bottom: none;
+}
+
+.checklist-text {
+    flex: 1;
+    color: var(--ink);
+}
+
+.checklist-text.completed {
+    text-decoration: line-through;
+    opacity: 0.65;
+}
+
+/* ---------------------------------------------------------
+   TASK DEPENDENCIES: blocked by / blocking
+--------------------------------------------------------- */
+
+.dependency-section {
+    margin-bottom: 16px;
+}
+
+.dependency-section:last-child {
+    margin-bottom: 0;
+}
+
+.dependency-label {
+    font-size: 11.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--slate);
+    margin-bottom: 8px;
+}
+
+.dependency-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.dependency-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--white);
+    color: var(--ink);
+    text-decoration: none;
+    font-size: 13.5px;
+}
+
+.dependency-item:hover {
+    background: var(--paper);
+    border-color: var(--slate-dim);
+}
+
+.dependency-item.open {
+    border-color: var(--gold-line);
+    background: var(--gold-soft);
+}
+
+.dependency-status {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--slate);
+    white-space: nowrap;
+}
+
+.dependency-item.open .dependency-status {
+    color: var(--gold-hover);
+}

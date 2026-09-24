@@ -8,6 +8,7 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "announcement_helpers.php";
 
 function e($value) {
     return htmlspecialchars($value ?? "", ENT_QUOTES, "UTF-8");
@@ -144,17 +145,22 @@ if ($department_result) {
 }
 
 $user_department = "";
-$user_role = $_SESSION["role"] ?? "Employee";
 $user_id = (int)$_SESSION["user_id"];
 
-$stmt = $conn->prepare("SELECT department FROM users WHERE id = ? LIMIT 1");
+$stmt = $conn->prepare("SELECT role, department FROM users WHERE id = ? AND active = 1 LIMIT 1");
 $stmt->bind_param("i", $user_id);
 $stmt->execute();
 $user_result = $stmt->get_result();
-if ($user_row = $user_result->fetch_assoc()) {
-    $user_department = $user_row["department"] ?? "";
-}
+$user_row = $user_result->fetch_assoc();
 $stmt->close();
+
+if (!$user_row) {
+    header("Location: login.php");
+    exit;
+}
+
+$user_role = $user_row["role"] ?? "Employee";
+$user_department = $user_row["department"] ?? "";
 
 $department_filter = $_GET["department"] ?? "";
 
@@ -1073,17 +1079,17 @@ for ($i = 0; $i < 7; $i++) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendar</title>
-<link rel="stylesheet" href="app.css?v=20">
+<link rel="stylesheet" href="app.css?v=22">
 
 </head>
 <body>
 
 <div class="page">
- 
+
     <!-- =================================
          SIDEBAR
     ================================= -->
- 
+
     <div class="sidebar">
         <div class="sidebar-spacer"></div>
         <div class="sidebar-item">
@@ -1105,10 +1111,16 @@ for ($i = 0; $i < 7; $i++) {
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -1117,12 +1129,27 @@ for ($i = 0; $i < 7; $i++) {
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($user_role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($user_role)): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($user_role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
         </div>
         <?php endif; ?>
 

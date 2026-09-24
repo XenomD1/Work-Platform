@@ -8,13 +8,33 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "csrf_helpers.php";
+require_once "announcement_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
-$role = $_SESSION["role"] ?? "";
+
+$user_stmt = $conn->prepare("
+    SELECT id, role
+    FROM users
+    WHERE id = ? AND active = 1
+");
+$user_stmt->bind_param("i", $user_id);
+$user_stmt->execute();
+$current_user = $user_stmt->get_result()->fetch_assoc();
+$user_stmt->close();
+
+if (!$current_user) {
+    header("Location: login.php");
+    exit;
+}
+
+$role = $current_user["role"];
 
 $action_message = "";
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    requireValidCsrfToken();
+
     $notification_id = (int)($_POST["notification_id"] ?? 0);
     $action = trim($_POST["action"] ?? "");
 
@@ -228,10 +248,16 @@ function buildPageUrl($page_number, $status_filter, $type_filter) {
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -239,13 +265,28 @@ function buildPageUrl($page_number, $status_filter, $type_filter) {
         <div class="sidebar-item">
             <a href="time_off.php">Time Off</a>
         </div>
+        <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
         <div class="sidebar-item active">
             <a href="notifications.php">Notifications</a>
         </div>
 
+        <?php if (canPostAnnouncements($role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
         <?php if (isAnyAdministrator($role)): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
         </div>
         <?php endif; ?>
 
@@ -272,6 +313,7 @@ function buildPageUrl($page_number, $status_filter, $type_filter) {
 
                 <?php if ($unread_count > 0): ?>
                     <form method="POST" style="margin-top:10px;">
+                        <?= csrfField() ?>
                         <button
                             type="submit"
                             name="action"
@@ -357,6 +399,7 @@ function buildPageUrl($page_number, $status_filter, $type_filter) {
                             <?php endif; ?>
 
                             <form method="POST" style="display:inline;">
+                                <?= csrfField() ?>
                                 <input
                                     type="hidden"
                                     name="notification_id"

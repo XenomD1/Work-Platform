@@ -9,6 +9,8 @@ if (!isset($_SESSION["user_id"])) {
 require "db.php";
 require "storage_config.php";
 require_once "role_helpers.php";
+require_once "announcement_helpers.php";
+require_once "csrf_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
 
@@ -115,6 +117,8 @@ $status = $time_off["status"];
 $attachment = $time_off["attachment"];
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+
+    requireValidCsrfToken();
 
     $time_off_type = trim($_POST["time_off_type"] ?? "");
     $start_date = trim($_POST["start_date"] ?? "");
@@ -385,10 +389,16 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -397,12 +407,27 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($role)): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
         </div>
         <?php endif; ?>
 
@@ -454,6 +479,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     <?php endif; ?>
 
     <form method="POST" enctype="multipart/form-data">
+
+        <?php echo csrfField(); ?>
 
         <input
             type="hidden"

@@ -8,6 +8,9 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "saved_view_helpers.php";
+require_once "csrf_helpers.php";
+require_once "announcement_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
 
@@ -85,6 +88,48 @@ if ($role === "Administrator") {
     ";
     $params = [$user_id, $user_id];
     $types = "ii";
+}
+
+/*
+    Filters (also usable as Saved Views): status, priority, overdue
+    only, and a name search.
+*/
+$status_filter = trim($_GET["status"] ?? "");
+$priority_filter = trim($_GET["priority"] ?? "");
+$overdue_only = isset($_GET["overdue"]) && $_GET["overdue"] === "1";
+$search = trim($_GET["search"] ?? "");
+
+$allowed_statuses = ["Not Started", "In Progress", "Complete"];
+$allowed_priorities = ["Low", "Medium", "High"];
+
+if (!in_array($status_filter, $allowed_statuses, true)) {
+    $status_filter = "";
+}
+
+if (!in_array($priority_filter, $allowed_priorities, true)) {
+    $priority_filter = "";
+}
+
+if ($status_filter !== "") {
+    $where_sql .= " AND tasks.status = ?";
+    $params[] = $status_filter;
+    $types .= "s";
+}
+
+if ($priority_filter !== "") {
+    $where_sql .= " AND tasks.priority = ?";
+    $params[] = $priority_filter;
+    $types .= "s";
+}
+
+if ($overdue_only) {
+    $where_sql .= " AND tasks.due_date < CURDATE() AND tasks.status <> 'Complete'";
+}
+
+if ($search !== "") {
+    $where_sql .= " AND tasks.name LIKE ?";
+    $params[] = "%" . $search . "%";
+    $types .= "s";
 }
 
 $sql = "
@@ -176,6 +221,11 @@ if ($role === "Administrator") {
     $department = "My Tasks";
 }
 
+$saved_views = getSavedViews($conn, $user_id, "Tasks");
+
+function e($value) {
+    return htmlspecialchars((string)($value ?? ""), ENT_QUOTES, "UTF-8");
+}
 ?>
 
 <!DOCTYPE html>
@@ -190,7 +240,7 @@ if ($role === "Administrator") {
     <title>Tasks</title>
 
 
-    <link rel="stylesheet" href="app.css?v=20">
+    <link rel="stylesheet" href="app.css?v=22">
 
 </head>
 
@@ -199,12 +249,12 @@ if ($role === "Administrator") {
 
 
 <div class="page">
- 
- 
+
+
     <!-- =================================
          SIDEBAR
     ================================= -->
- 
+
     <div class="sidebar">
         <div class="sidebar-spacer"></div>
         <div class="sidebar-item">
@@ -226,10 +276,16 @@ if ($role === "Administrator") {
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -238,12 +294,27 @@ if ($role === "Administrator") {
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($role)): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
         </div>
         <?php endif; ?>
 
@@ -295,6 +366,100 @@ if ($role === "Administrator") {
 
         </div>
 
+        <!-- FILTERS -->
+
+        <div class="card" style="margin-bottom:18px;">
+
+            <form method="GET" style="display:flex;gap:12px;flex-wrap:wrap;align-items:end;">
+
+                <div class="form-row" style="margin:0;">
+                    <label for="search">Search</label>
+                    <input type="text" id="search" name="search" value="<?= e($search) ?>" placeholder="Task name...">
+                </div>
+
+                <div class="form-row" style="margin:0;">
+                    <label for="status">Status</label>
+                    <select id="status" name="status">
+                        <option value="">All</option>
+                        <?php foreach ($allowed_statuses as $status_option): ?>
+                            <option value="<?= e($status_option) ?>" <?= $status_filter === $status_option ? "selected" : "" ?>>
+                                <?= e($status_option) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div class="form-row" style="margin:0;">
+                    <label for="priority">Priority</label>
+                    <select id="priority" name="priority">
+                        <option value="">All</option>
+                        <?php foreach ($allowed_priorities as $priority_option): ?>
+                            <option value="<?= e($priority_option) ?>" <?= $priority_filter === $priority_option ? "selected" : "" ?>>
+                                <?= e($priority_option) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div class="form-row" style="margin:0;flex-direction:row;align-items:center;gap:6px;">
+                    <input type="checkbox" id="overdue" name="overdue" value="1" style="width:auto;" <?= $overdue_only ? "checked" : "" ?>>
+                    <label for="overdue" style="margin:0;">Overdue only</label>
+                </div>
+
+                <button class="button primary" type="submit">FILTER</button>
+                <a class="button" href="tasks.php">CLEAR</a>
+
+            </form>
+
+        </div>
+
+        <!-- SAVED VIEWS -->
+
+        <div class="card" style="margin-bottom:18px;">
+
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <strong>Saved Views:</strong>
+                    <?php if (!$saved_views): ?>
+                        <span style="color:var(--slate);">None yet</span>
+                    <?php else: ?>
+                        <?php foreach ($saved_views as $view): ?>
+                            <a class="button" href="tasks.php?<?= e($view["query_string"]) ?>"><?= e($view["name"]) ?></a>
+                            <form method="POST" action="saved_view_action.php" style="display:inline;" onsubmit="return confirm('Delete this saved view?');">
+                                <?= csrfField() ?>
+                                <input type="hidden" name="action" value="delete">
+                                <input type="hidden" name="module" value="Tasks">
+                                <input type="hidden" name="view_id" value="<?= (int)$view["id"] ?>">
+                                <button class="button" type="submit" title="Delete" style="padding:4px 8px;">&times;</button>
+                            </form>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </div>
+
+                <form method="POST" action="saved_view_action.php" id="save_view_form" style="display:flex;gap:8px;align-items:center;">
+                    <?= csrfField() ?>
+                    <input type="hidden" name="action" value="create">
+                    <input type="hidden" name="module" value="Tasks">
+                    <input type="hidden" name="query_string" id="save_view_query_string" value="">
+                    <input type="text" name="name" placeholder="Name this view..." maxlength="100" style="width:180px;">
+                    <button class="button primary" type="submit">SAVE CURRENT VIEW</button>
+                </form>
+
+            </div>
+
+        </div>
+
+        <script>
+        (function () {
+            var form = document.getElementById("save_view_form");
+            if (!form) return;
+            form.addEventListener("submit", function () {
+                document.getElementById("save_view_query_string").value =
+                    window.location.search.replace(/^\?/, "");
+            });
+        })();
+        </script>
 
         <!-- TASKS -->
 

@@ -8,6 +8,8 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "csrf_helpers.php";
+require_once "announcement_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
 
@@ -149,6 +151,8 @@ $can_edit =
  */
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
+    requireValidCsrfToken();
+
     $action = trim($_POST["action"] ?? "");
 
     if (!$can_review) {
@@ -267,7 +271,7 @@ function formatDateTimeValue($value) {
 
 <title>View Time Off</title>
 
-<link rel="stylesheet" href="app.css?v=18">
+<link rel="stylesheet" href="app.css?v=22">
 
 </head>
 
@@ -296,10 +300,16 @@ function formatDateTimeValue($value) {
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -308,12 +318,27 @@ function formatDateTimeValue($value) {
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($role)): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
         </div>
         <?php endif; ?>
 
@@ -340,6 +365,10 @@ function formatDateTimeValue($value) {
         </div>
 
         <div class="header-actions">
+
+            <a class="button" href="comments.php?module=Time+Off&id=<?php echo (int)$time_off["id"]; ?>">COMMENTS</a>
+
+            <a class="button" href="print_time_off.php?id=<?php echo (int)$time_off["id"]; ?>" target="_blank">PRINT / EXPORT PDF</a>
 
             <a class="button" href="time_off.php">
                 BACK TO TIME OFF
@@ -541,6 +570,8 @@ function formatDateTimeValue($value) {
 
                     <form method="POST">
 
+                        <?php echo csrfField(); ?>
+
                         <input
                             type="hidden"
                             name="time_off_id"
@@ -565,6 +596,8 @@ function formatDateTimeValue($value) {
                     <h3>Reject Request</h3>
 
                     <form method="POST">
+
+                        <?php echo csrfField(); ?>
 
                         <input
                             type="hidden"

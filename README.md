@@ -12,16 +12,29 @@ teams, file storage, reports, training, and time off — built to run on XAMPP.
 - **Meetings / Events** — single and recurring events, RSVPs, reminders sent
   by email, automatic status completion.
 - **Teams** — team membership, team leads, project-scoped teams.
+- **Organization Chart** — Administrator-only department-by-department
+  breakdown (headcount, management contacts), with drill-down into each
+  department's roster.
 - **Files** — upload, versioning, folders, and Trash (soft delete with
   restore).
 - **Reports** — tiered visibility by creator level (Employee / Team Lead /
   Manager / Administrator).
+- **Analytics** — role-scoped metrics and reporting, reachable from the
+  sidebar.
 - **Training** — scheduling, attendee management, department or
   individual-based invitations.
 - **Time Off** — request/approval workflow with optional attachments.
+- **Timesheets** — reachable from the sidebar.
 - **Notifications** — in-app notifications for assignments, approvals, and
   status changes across every module above.
-- **User roles** — see [Roles & Permissions](#roles--permissions) below.
+- **Announcements** — organization-wide or department-targeted posts
+  (Organization/Department Announcement, Scheduled Maintenance, Office
+  Closure, Policy Update), publish-now or scheduled, optional expiration,
+  with lifecycle states (Active/Scheduled/Expired/Inactive). Posting is
+  gated by `canPostAnnouncements()`; non-admins can only target their own
+  department.
+- **User roles & permissions** — see [Roles & Permissions](#roles--permissions)
+  below.
 
 ## Requirements
 
@@ -102,6 +115,67 @@ Two shared helper files implement this consistently across the app:
 - `notification_helpers.php` — `createNotification()` and related functions
   used by every module to notify affected users (excluding the person who
   triggered the action, and skipping inactive/deactivated accounts).
+
+### Roles & Permissions page (`roles.php`)
+
+Administrator-only (strict — `$role === "Administrator"`, not just
+`isAnyAdministrator()`). Backed by three real tables:
+
+- `custom_roles` (`id`, `name`, `description`, `is_system`, `created_at`) —
+  the four roles above are seeded as `is_system = 1`.
+- `permissions` (`id`, `code`, `module`, `label`, `description`,
+  `is_protected`) — the full catalog of assignable permissions, grouped by
+  module (Projects, Tasks, Teams, Reports, Time Off, Training/Events,
+  Files, Analytics, Admin, …).
+- `role_permissions` (`role_name`, `permission_code`) — a many-to-many
+  junction table; a row's presence *is* the "allowed" flag, there's no
+  boolean column.
+
+`roles.php` renders every role × permission as a checkbox matrix, grouped
+by module, and on save replaces each role's full set of rows in
+`role_permissions` inside a transaction. Submitted role names and
+permission codes are always validated against the real tables before any
+write.
+
+**`is_protected` guard:** a permission marked `is_protected = 1` cannot be
+unchecked for the **Administrator** role specifically — the checkbox
+renders disabled and force-checked, and the server re-adds any protected
+code for Administrator even if a stale/edited request tries to drop it.
+This exists so an Administrator can never accidentally strip every admin
+of the ability to manage roles again. Protected permissions can still be
+freely toggled for every other role.
+
+**Important — this is a reference/tracking layer, not yet live
+enforcement.** Checking or unchecking a box in `roles.php` only changes
+what's stored in `role_permissions`. It does **not** change what any role
+can actually do elsewhere in the app today — real access control is still
+the hardcoded checks described above (`isAnyAdministrator()`,
+`canAdministerDepartment()`, and the individual `$role === "Manager"` /
+`$role === "IT Administrator"` checks scattered through pages like
+`edit_project.php`, `edit_team.php`, `edit_event.php`,
+`edit_training.php`, `file_trash.php`, and `announcement_helpers.php`).
+Wiring real, page-by-page enforcement to the `role_permissions` table is a
+separate, larger project — not yet done.
+
+### Sidebar convention
+
+Every page with a sidebar follows one canonical nav order: Dashboard,
+Tasks, Projects, Calendar, Meetings / Events, Teams, Organization Chart,
+Files, Reports, Analytics, Training, Time Off, Timesheets, Notifications,
+Announcements *(if `canPostAnnouncements($role)`)*, User Management *(if
+`isAnyAdministrator($role)`)*, Roles & Permissions *(if `$role ===
+"Administrator"`, strict)*, then a visually separated Account / Settings
+group at the bottom.
+
+The variable holding the current user's role is **not** consistent by
+name across files — it's `$role`, `$current_role`, `$user["role"]`, or
+(in a couple of older files) `$current_user["role"]` directly, with no
+separate variable at all. Always check what a given file already uses
+before adding or editing a sidebar conditional; copying a variable name
+from another file without checking has been the single most common bug
+source when this nav was standardized (a sidebar conditional silently
+falling back to `$_SESSION["role"] ?? ""` instead of the page's own
+re-fetched, active-status-checked role value).
 
 Project, task, and team "manager" assignment is done by selecting a real
 user account (stored as `manager_id`, a foreign key to `users.id`) — not by

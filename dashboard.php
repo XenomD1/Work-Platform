@@ -8,6 +8,9 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "announcement_helpers.php";
+require_once "file_access_helpers.php";
+require_once "csrf_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
 
@@ -42,240 +45,21 @@ function dashboardCanAccessFileLocation(
     string $role,
     string $user_department
 ): bool {
-    if ($location_type === "Organization") {
-        return true;
-    }
-
-    if ($role === "Administrator") {
-        return true;
-    }
-
-    if ($location_type === "Department") {
-        return (string)$location_id === (string)$user_department;
-    }
-
-    if ($location_type === "Project") {
-        $stmt = $conn->prepare("
-            SELECT department, manager_id
-            FROM projects
-            WHERE id = ?
-        ");
-        $id = (int)$location_id;
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        $project = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$project) {
-            return false;
-        }
-
-        if (
-            ($role === "Manager" || $role === "IT Administrator")
-            && $project["department"] === $user_department
-        ) {
-            return true;
-        }
-
-        if (
-            $project["manager_id"] !== null
-            && (int)$project["manager_id"] === $user_id
-        ) {
-            return true;
-        }
-
-        $stmt = $conn->prepare("
-            SELECT COUNT(*) AS total
-            FROM teams t
-            INNER JOIN team_members tm ON tm.team_id = t.id
-            WHERE t.project_id = ?
-              AND tm.user_id = ?
-        ");
-        $stmt->bind_param("ii", $id, $user_id);
-        $stmt->execute();
-        $total = (int)$stmt->get_result()->fetch_assoc()["total"];
-        $stmt->close();
-
-        return $total > 0;
-    }
-
-    if ($location_type === "Task") {
-        $stmt = $conn->prepare("
-            SELECT p.department, p.manager_id
-            FROM tasks t
-            INNER JOIN projects p ON p.id = t.project_id
-            WHERE t.id = ?
-        ");
-        $id = (int)$location_id;
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        $task = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$task) {
-            return false;
-        }
-
-        if (
-            ($role === "Manager" || $role === "IT Administrator")
-            && $task["department"] === $user_department
-        ) {
-            return true;
-        }
-
-        if (
-            $task["manager_id"] !== null
-            && (int)$task["manager_id"] === $user_id
-        ) {
-            return true;
-        }
-
-        $stmt = $conn->prepare("
-            SELECT COUNT(*) AS total
-            FROM task_assignments
-            WHERE task_id = ?
-              AND user_id = ?
-        ");
-        $stmt->bind_param("ii", $id, $user_id);
-        $stmt->execute();
-        $total = (int)$stmt->get_result()->fetch_assoc()["total"];
-        $stmt->close();
-
-        return $total > 0;
-    }
-
-    if ($location_type === "Team") {
-        $stmt = $conn->prepare("
-            SELECT t.team_lead_id, p.department, p.manager_id
-            FROM teams t
-            INNER JOIN projects p ON p.id = t.project_id
-            WHERE t.id = ?
-        ");
-        $id = (int)$location_id;
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        $team = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$team) {
-            return false;
-        }
-
-        if ((int)$team["team_lead_id"] === $user_id) {
-            return true;
-        }
-
-        if (
-            ($role === "Manager" || $role === "IT Administrator")
-            && $team["department"] === $user_department
-        ) {
-            return true;
-        }
-
-        if (
-            $team["manager_id"] !== null
-            && (int)$team["manager_id"] === $user_id
-        ) {
-            return true;
-        }
-
-        $stmt = $conn->prepare("
-            SELECT COUNT(*) AS total
-            FROM team_members
-            WHERE team_id = ?
-              AND user_id = ?
-        ");
-        $stmt->bind_param("ii", $id, $user_id);
-        $stmt->execute();
-        $total = (int)$stmt->get_result()->fetch_assoc()["total"];
-        $stmt->close();
-
-        return $total > 0;
-    }
-
-    if ($location_type === "Event") {
-        $stmt = $conn->prepare("
-            SELECT department, type, organizer
-            FROM events
-            WHERE id = ?
-              AND deleted = 0
-        ");
-        $id = (int)$location_id;
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        $event = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$event) {
-            return false;
-        }
-
-        if ($event["type"] === "Organization-Wide Event") {
-            return true;
-        }
-
-        if ((int)$event["organizer"] === $user_id) {
-            return true;
-        }
-
-        if ($event["department"] === $user_department) {
-            return true;
-        }
-
-        $stmt = $conn->prepare("
-            SELECT COUNT(*) AS total
-            FROM event_attendees
-            WHERE event_id = ?
-              AND user_id = ?
-        ");
-        $stmt->bind_param("ii", $id, $user_id);
-        $stmt->execute();
-        $total = (int)$stmt->get_result()->fetch_assoc()["total"];
-        $stmt->close();
-
-        return $total > 0;
-    }
-
-    if ($location_type === "Training") {
-        $stmt = $conn->prepare("
-            SELECT department, organizer
-            FROM training
-            WHERE id = ?
-              AND deleted = 0
-        ");
-        $id = (int)$location_id;
-        $stmt->bind_param("i", $id);
-        $stmt->execute();
-        $training = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if (!$training) {
-            return false;
-        }
-
-        if ((int)$training["organizer"] === $user_id) {
-            return true;
-        }
-
-        if ($training["department"] === $user_department) {
-            return true;
-        }
-
-        $stmt = $conn->prepare("
-            SELECT COUNT(*) AS total
-            FROM training_attendees
-            WHERE training_id = ?
-              AND (user_id = ? OR department = ?)
-        ");
-        $stmt->bind_param("iis", $id, $user_id, $user_department);
-        $stmt->execute();
-        $total = (int)$stmt->get_result()->fetch_assoc()["total"];
-        $stmt->close();
-
-        return $total > 0;
-    }
-
-    return false;
+    /*
+        This used to be its own independent copy of the same
+        location-visibility logic duplicated in files.php and
+        view_file.php (already deduped into file_access_helpers.php).
+        It now just delegates to the shared implementation so a fix
+        made in one place reaches every caller.
+    */
+    return canAccessFileLocation(
+        $conn,
+        $location_type,
+        $location_id,
+        $user_id,
+        $role,
+        $user_department
+    );
 }
 
 function dashboardUserLeadsTeamOnProject(
@@ -793,6 +577,8 @@ foreach ($tasks as $task) {
         $overdue_count++;
     }
 }
+
+$visible_announcements = getVisibleAnnouncements($conn, $user_id, $user_department ?? "");
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -800,7 +586,7 @@ foreach ($tasks as $task) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Dashboard</title>
-<link rel="stylesheet" href="app.css?v=20">
+<link rel="stylesheet" href="app.css?v=22">
 </head>
 <body>
 <div class="page">
@@ -813,14 +599,25 @@ foreach ($tasks as $task) {
         <div class="sidebar-item"><a href="calendar.php">Calendar</a></div>
         <div class="sidebar-item"><a href="events.php">Meetings / Events</a></div>
         <div class="sidebar-item"><a href="teams.php">Teams</a></div>
+        <div class="sidebar-item"><a href="org_chart.php">Organization Chart</a></div>
         <div class="sidebar-item"><a href="files.php">Files</a></div>
         <div class="sidebar-item"><a href="reports.php">Reports</a></div>
+        <div class="sidebar-item"><a href="analytics.php">Analytics</a></div>
         <div class="sidebar-item"><a href="training.php">Training</a></div>
         <div class="sidebar-item"><a href="time_off.php">Time Off</a></div>
+        <div class="sidebar-item"><a href="timesheets.php">Timesheets</a></div>
         <div class="sidebar-item"><a href="notifications.php">Notifications</a></div>
+
+        <?php if (canPostAnnouncements($role)): ?>
+            <div class="sidebar-item"><a href="announcements.php">Announcements</a></div>
+        <?php endif; ?>
 
         <?php if (isAnyAdministrator($role)): ?>
             <div class="sidebar-item"><a href="users.php">User Management</a></div>
+        <?php endif; ?>
+
+        <?php if ($role === "Administrator"): ?>
+            <div class="sidebar-item"><a href="roles.php">Roles &amp; Permissions</a></div>
         <?php endif; ?>
 
         <div class="sidebar-bottom">
@@ -842,6 +639,70 @@ foreach ($tasks as $task) {
         </header>
 
         <div class="content">
+
+            <?php if ($visible_announcements || canPostAnnouncements($role)): ?>
+                <section class="card" style="margin-bottom:24px;">
+
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <h2 style="margin:0;">Announcements</h2>
+                        <?php if (canPostAnnouncements($role)): ?>
+                            <a href="new_announcement.php" class="button">MANAGE ANNOUNCEMENTS</a>
+                        <?php endif; ?>
+                    </div>
+
+                    <?php if (!$visible_announcements): ?>
+
+                        <div class="empty" style="margin-top:10px;">
+                            No active announcements right now.
+                        </div>
+
+                    <?php else: ?>
+
+                        <?php foreach ($visible_announcements as $announcement): ?>
+
+                            <div style="margin-top:14px;padding:12px 14px;border-left:3px solid var(--gold);background:var(--gold-soft);border-radius:4px;">
+
+                                <div style="display:flex;justify-content:space-between;gap:12px;align-items:baseline;">
+
+                                    <div>
+                                        <span style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--slate);">
+                                            <?php echo e($announcement["type"]); ?>
+                                            <?php if (!empty($announcement["department"])): ?>
+                                                · <?php echo e($announcement["department"]); ?>
+                                            <?php endif; ?>
+                                        </span>
+                                        <div style="font-weight:700;margin-top:2px;">
+                                            <?php echo e($announcement["title"]); ?>
+                                        </div>
+                                    </div>
+
+                                    <form method="POST" action="announcement_action.php">
+                                        <?php echo csrfField(); ?>
+                                        <input type="hidden" name="action" value="dismiss">
+                                        <input type="hidden" name="announcement_id" value="<?php echo (int)$announcement["id"]; ?>">
+                                        <button class="button" type="submit" title="Dismiss">DISMISS</button>
+                                    </form>
+
+                                </div>
+
+                                <div style="margin-top:8px;white-space:pre-wrap;">
+                                    <?php echo e($announcement["body"]); ?>
+                                </div>
+
+                                <div style="margin-top:8px;font-size:12px;color:var(--slate);">
+                                    Posted by <?php echo e($announcement["created_by_name"] ?? "a former user"); ?>
+                                    on <?php echo e(date("M j, Y g:i A", strtotime($announcement["created_at"]))); ?>
+                                </div>
+
+                            </div>
+
+                        <?php endforeach; ?>
+
+                    <?php endif; ?>
+
+                </section>
+            <?php endif; ?>
+
             <section class="summary-grid">
                 <div class="summary-card">
                     <a href="projects.php">

@@ -8,6 +8,7 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "announcement_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
 
@@ -132,6 +133,95 @@ foreach ($members as $member) {
 sort($departments);
 
 /*
+ * Workload / capacity.
+ *
+ * Scoped to this team's project: for each member, how many tasks in
+ * this project are assigned to them, how many are still active
+ * (not Complete), and how many of those are overdue (due date has
+ * passed and the task isn't Complete).
+ */
+$workload = [];
+
+foreach ($members as $member) {
+    $workload[(int)$member["id"]] = [
+        "assigned" => 0,
+        "active" => 0,
+        "overdue" => 0,
+        "overdue_tasks" => [],
+    ];
+}
+
+if ($members) {
+    $workload_stmt = $conn->prepare("
+        SELECT
+            tm.user_id,
+            t.id AS task_id,
+            t.name AS task_name,
+            t.status,
+            t.due_date
+        FROM team_members tm
+        INNER JOIN task_assignments ta
+            ON ta.user_id = tm.user_id
+        INNER JOIN tasks t
+            ON t.id = ta.task_id
+        WHERE tm.team_id = ?
+          AND t.project_id = ?
+    ");
+
+    $workload_stmt->bind_param(
+        "ii",
+        $team_id,
+        $team["project_id"]
+    );
+    $workload_stmt->execute();
+    $workload_result = $workload_stmt->get_result();
+
+    $today = date("Y-m-d");
+
+    while ($row = $workload_result->fetch_assoc()) {
+        $member_id = (int)$row["user_id"];
+
+        if (!isset($workload[$member_id])) {
+            continue;
+        }
+
+        $workload[$member_id]["assigned"]++;
+
+        $is_complete = ($row["status"] === "Complete");
+
+        if (!$is_complete) {
+            $workload[$member_id]["active"]++;
+        }
+
+        $due_date = $row["due_date"];
+        $is_overdue =
+            !$is_complete
+            && !empty($due_date)
+            && substr($due_date, 0, 10) < $today;
+
+        if ($is_overdue) {
+            $workload[$member_id]["overdue"]++;
+            $workload[$member_id]["overdue_tasks"][] = [
+                "id" => (int)$row["task_id"],
+                "name" => $row["task_name"],
+                "due_date" => $due_date,
+            ];
+        }
+    }
+
+    $workload_stmt->close();
+
+    foreach ($workload as $member_id => $data) {
+        usort(
+            $workload[$member_id]["overdue_tasks"],
+            function ($a, $b) {
+                return strcmp($a["due_date"], $b["due_date"]);
+            }
+        );
+    }
+}
+
+/*
  * Visibility:
  * Administrator -> any team
  * Manager -> project in own department
@@ -233,10 +323,16 @@ function e($value) {
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -245,12 +341,27 @@ function e($value) {
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($role)): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
         </div>
         <?php endif; ?>
 
@@ -282,6 +393,8 @@ function e($value) {
         </div>
 
         <div class="header-actions">
+
+            <a class="button" href="comments.php?module=Team&id=<?php echo (int)$team["id"]; ?>">COMMENTS</a>
 
             <a class="button" href="teams.php">
                 BACK TO TEAMS
@@ -409,6 +522,92 @@ function e($value) {
                         <div class="member-department">
                             <?php echo e($member["department"]); ?>
                         </div>
+
+                    </div>
+
+                <?php endforeach; ?>
+
+            </div>
+
+        <?php endif; ?>
+
+    </div>
+
+    <div class="card">
+
+        <h2>Team Workload</h2>
+
+        <?php if (!$members): ?>
+
+            <div class="empty">
+                No members are assigned to this team.
+            </div>
+
+        <?php else: ?>
+
+            <div class="grid info-grid">
+
+                <?php foreach ($members as $member): ?>
+
+                    <?php
+                    $member_id = (int)$member["id"];
+                    $data = $workload[$member_id];
+                    ?>
+
+                    <div class="detail full">
+
+                        <span class="label">
+                            <?php
+                            echo e(
+                                $member["first_name"]
+                                . " "
+                                . $member["last_name"]
+                            );
+                            ?>
+                        </span>
+
+                        <span class="value">
+
+                            <?php echo (int)$data["assigned"]; ?> assigned
+                            &nbsp;·&nbsp;
+                            <?php echo (int)$data["active"]; ?> active
+                            &nbsp;·&nbsp;
+                            <span<?php echo $data["overdue"] > 0 ? ' style="color:#b3261e;font-weight:700;"' : ""; ?>>
+                                <?php echo (int)$data["overdue"]; ?> overdue
+                            </span>
+
+                            <?php if ($data["overdue_tasks"]): ?>
+
+                                <ul style="margin-top:6px;">
+
+                                    <?php foreach ($data["overdue_tasks"] as $overdue_task): ?>
+
+                                        <li>
+                                            <a
+                                                href="view_task.php?id=<?php echo (int)$overdue_task["id"]; ?>"
+                                                style="color: black;"
+                                            >
+                                                <?php echo e($overdue_task["name"]); ?>
+                                            </a>
+                                            &nbsp;—&nbsp;
+                                            due
+                                            <?php
+                                            echo e(
+                                                date(
+                                                    "M j, Y",
+                                                    strtotime($overdue_task["due_date"])
+                                                )
+                                            );
+                                            ?>
+                                        </li>
+
+                                    <?php endforeach; ?>
+
+                                </ul>
+
+                            <?php endif; ?>
+
+                        </span>
 
                     </div>
 

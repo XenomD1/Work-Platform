@@ -8,9 +8,38 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "announcement_helpers.php";
 require_once "notification_helpers.php";
+require_once "task_dependency_helpers.php";
+require_once "task_recurrence_helpers.php";
+require_once "csrf_helpers.php";
 
 $current_user_id = (int)$_SESSION["user_id"];
+
+/*
+    Re-fetch the current user's role/department from the database rather
+    than trusting the session, so a demotion/deactivation/department
+    change takes effect immediately instead of only after the user logs
+    out and back in.
+*/
+
+$me_stmt = $conn->prepare("
+    SELECT role, department
+    FROM users
+    WHERE id = ? AND active = 1
+");
+$me_stmt->bind_param("i", $current_user_id);
+$me_stmt->execute();
+$me = $me_stmt->get_result()->fetch_assoc();
+$me_stmt->close();
+
+if (!$me) {
+    header("Location: login.php");
+    exit;
+}
+
+$current_role = $me["role"];
+$current_department = $me["department"] ?? "";
 
 /*
     Administrators can edit any task.
@@ -49,6 +78,11 @@ $sql = "
         tasks.start_date,
         tasks.due_date,
         tasks.completion,
+        tasks.recurrence_type,
+        tasks.recurrence_end_date,
+        tasks.recurrence_max_occurrences,
+        tasks.recurrence_occurrence_number,
+        tasks.recurrence_parent_task_id,
         projects.name AS project_name,
         projects.department AS project_department,
         projects.manager_id AS project_manager_id
@@ -74,10 +108,10 @@ if (!$task) {
 }
 
 $can_edit_this_task =
-    $_SESSION["role"] === "Administrator"
+    $current_role === "Administrator"
     || (
-        ($_SESSION["role"] === "Manager" || $_SESSION["role"] === "IT Administrator")
-        && $task["project_department"] === ($_SESSION["department"] ?? "")
+        ($current_role === "Manager" || $current_role === "IT Administrator")
+        && $task["project_department"] === $current_department
     )
     || (
         $task["project_manager_id"] !== null
@@ -140,12 +174,56 @@ $stmt->close();
 
 
 /*
+    Load current blockers and the other tasks in this project that
+    could be selected as a blocker (everything but this task itself).
+*/
+
+$current_blocker_ids = [];
+
+$stmt = $conn->prepare("
+    SELECT depends_on_task_id
+    FROM task_dependencies
+    WHERE task_id = ?
+");
+$stmt->bind_param("i", $task_id);
+$stmt->execute();
+$result = $stmt->get_result();
+
+while ($dependency = $result->fetch_assoc()) {
+    $current_blocker_ids[] = (int)$dependency["depends_on_task_id"];
+}
+
+$stmt->close();
+
+$available_blocker_tasks = [];
+
+$stmt = $conn->prepare("
+    SELECT id, name, status
+    FROM tasks
+    WHERE project_id = ?
+      AND id <> ?
+    ORDER BY name ASC
+");
+$stmt->bind_param("ii", $task["project_id"], $task_id);
+$stmt->execute();
+$result = $stmt->get_result();
+
+while ($other_task = $result->fetch_assoc()) {
+    $available_blocker_tasks[] = $other_task;
+}
+
+$stmt->close();
+
+
+/*
     Save changes
 */
 
 $error = "";
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+
+    requireValidCsrfToken();
 
     $name = trim($_POST["name"] ?? "");
     $description = trim($_POST["description"] ?? "");
@@ -155,6 +233,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $due_date = $_POST["due_date"] ?? "";
 
     $selected_users = $_POST["assigned_users"] ?? [];
+
+    $recurrence_type = trim($_POST["recurrence_type"] ?? "none");
+    $recurrence_end_date = trim($_POST["recurrence_end_date"] ?? "");
+    $recurrence_max_occurrences = trim($_POST["recurrence_max_occurrences"] ?? "");
 
     /*
         Make sure assigned user IDs are integers.
@@ -184,6 +266,22 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     ) {
 
         $error = "Invalid task status.";
+
+    } elseif (!in_array($recurrence_type, TASK_RECURRENCE_TYPES, true)) {
+
+        $error = "Invalid recurrence type.";
+
+    } elseif (
+        $recurrence_type !== "none"
+        && $recurrence_end_date === ""
+        && $recurrence_max_occurrences === ""
+    ) {
+
+        $error = "A recurring task needs either an end date or a maximum number of occurrences.";
+
+    } elseif ($recurrence_type !== "none" && $due_date === "") {
+
+        $error = "A recurring task needs a due date to schedule the next occurrence from.";
 
     } else {
 
@@ -252,6 +350,53 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 ? $due_date
                 : null;
 
+        if ($recurrence_type === "none") {
+            $recurrence_end_date_value = null;
+            $recurrence_max_occurrences_value = null;
+        } else {
+            $recurrence_end_date_value = $recurrence_end_date !== "" ? $recurrence_end_date : null;
+            $recurrence_max_occurrences_value = $recurrence_max_occurrences !== "" ? (int)$recurrence_max_occurrences : null;
+        }
+
+
+        /*
+            Task dependencies ("Blocked by").
+
+            A task cannot leave "Not Started" while it still has an
+            open (not yet Complete) blocker. This only fires when the
+            task is actually attempting to leave "Not Started" - once
+            it has moved on, reopening a blocker later does not pull
+            it back automatically.
+
+            The selected blocker set is also checked for circular
+            dependencies before anything is saved.
+        */
+
+        $dependency_ok = true;
+
+        $selected_blockers = $_POST["blocked_by"] ?? [];
+        $selected_blockers = array_map("intval", $selected_blockers);
+        $selected_blockers = array_values(array_unique($selected_blockers));
+
+        if ($task["status"] === "Not Started" && $status !== "Not Started") {
+            if (taskHasOpenBlockers($conn, $task_id)) {
+                $error = "This task is blocked by one or more incomplete tasks and cannot be started yet.";
+                $dependency_ok = false;
+            }
+        }
+
+        if (
+            $dependency_ok
+            && taskDependencyWouldCreateCycle($conn, (int)$task["project_id"], $task_id, $selected_blockers)
+        ) {
+            $error = "That combination of blockers would create a circular dependency.";
+            $dependency_ok = false;
+        }
+
+        if (!$dependency_ok) {
+            // Fall through without saving; $error is already set and
+            // the form below will re-render with it.
+        } else {
 
         /*
             Update task.
@@ -266,14 +411,17 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 status = ?,
                 start_date = ?,
                 due_date = ?,
-                completion = ?
+                completion = ?,
+                recurrence_type = ?,
+                recurrence_end_date = ?,
+                recurrence_max_occurrences = ?
             WHERE id = ?
         ";
 
         $stmt = $conn->prepare($sql);
 
         $stmt->bind_param(
-            "ssssssdi",
+            "ssssssdssii",
             $name,
             $description,
             $priority,
@@ -281,6 +429,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $start_date_value,
             $due_date_value,
             $completion,
+            $recurrence_type,
+            $recurrence_end_date_value,
+            $recurrence_max_occurrences_value,
             $task_id
         );
 
@@ -332,6 +483,46 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                         "ii",
                         $task_id,
                         $user_id
+                    );
+
+                    $stmt->execute();
+                }
+
+                $stmt->close();
+            }
+
+
+            /*
+                Replace the blocker set wholesale, same pattern as
+                assignments above.
+            */
+
+            $sql = "
+                DELETE FROM task_dependencies
+                WHERE task_id = ?
+            ";
+
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param("i", $task_id);
+            $stmt->execute();
+            $stmt->close();
+
+            if (!empty($selected_blockers)) {
+
+                $sql = "
+                    INSERT INTO task_dependencies
+                    (task_id, depends_on_task_id)
+                    VALUES (?, ?)
+                ";
+
+                $stmt = $conn->prepare($sql);
+
+                foreach ($selected_blockers as $blocker_id) {
+
+                    $stmt->bind_param(
+                        "ii",
+                        $task_id,
+                        $blocker_id
                     );
 
                     $stmt->execute();
@@ -397,6 +588,54 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
 
             /*
+                Recurring tasks: if this save just moved the task from
+                something else into "Complete", spawn the next
+                occurrence (if it's a recurring task that hasn't hit
+                its end condition yet).
+            */
+
+            if ($task["status"] !== "Complete" && $status === "Complete") {
+
+                $completed_task_for_recurrence = [
+                    "id" => $task_id,
+                    "project_id" => $task["project_id"],
+                    "name" => $name,
+                    "description" => $description,
+                    "priority" => $priority,
+                    "start_date" => $start_date_value,
+                    "due_date" => $due_date_value,
+                    "recurrence_type" => $recurrence_type,
+                    "recurrence_end_date" => $recurrence_end_date_value,
+                    "recurrence_max_occurrences" => $recurrence_max_occurrences_value,
+                    "recurrence_occurrence_number" => $task["recurrence_occurrence_number"]
+                ];
+
+                $new_recurring_task_id = spawnNextTaskOccurrence($conn, $completed_task_for_recurrence);
+
+                if ($new_recurring_task_id !== null) {
+
+                    foreach ($selected_users as $assigned_user_id) {
+
+                        if ((int)$assigned_user_id === $current_user_id) {
+                            continue;
+                        }
+
+                        createNotification(
+                            $conn,
+                            (int)$assigned_user_id,
+                            "Task",
+                            "New Recurring Task",
+                            "A new occurrence of \"" . $name . "\" was created.",
+                            "Tasks",
+                            $new_recurring_task_id,
+                            "view_task.php?id=" . $new_recurring_task_id
+                        );
+                    }
+                }
+            }
+
+
+            /*
                 Return to the task's view page.
             */
 
@@ -412,6 +651,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
             $stmt->close();
         }
+
+        } // end dependency_ok gate
     }
 }
 
@@ -435,7 +676,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     </title>
 
 
-    <link rel="stylesheet" href="app.css?v=20">
+    <link rel="stylesheet" href="app.css?v=22">
 
 
 </head>
@@ -480,11 +721,19 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         </div>
 
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
 
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
 
         <div class="sidebar-item">
@@ -496,12 +745,28 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         </div>
 
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($current_role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($current_role)): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($current_role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
         </div>
         <?php endif; ?>
 
@@ -558,6 +823,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 method="POST"
                 class="form-box"
             >
+
+                <?= csrfField() ?>
 
 
                 <div class="form-row">
@@ -691,6 +958,69 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
                             <?php endforeach; ?>
 
+                        </div>
+
+                    </div>
+
+
+                    <!-- BLOCKED BY -->
+
+                    <div class="form-group full">
+
+                        <label>
+                            Blocked By
+                        </label>
+
+                        <?php if (empty($available_blocker_tasks)): ?>
+
+                            <div class="help-text">
+                                No other tasks exist in this project yet.
+                            </div>
+
+                        <?php else: ?>
+
+                            <div class="user-list">
+
+                                <?php foreach ($available_blocker_tasks as $other_task): ?>
+
+                                    <?php
+                                    $other_task_id = (int)$other_task["id"];
+
+                                    $checked = in_array(
+                                        $other_task_id,
+                                        $current_blocker_ids
+                                    );
+                                    ?>
+
+                                    <div class="user-option">
+
+                                        <label>
+
+                                            <input
+                                                type="checkbox"
+                                                name="blocked_by[]"
+                                                value="<?= $other_task_id ?>"
+                                                <?= $checked ? "checked" : "" ?>
+                                            >
+
+                                            <?= htmlspecialchars($other_task["name"]) ?>
+
+                                            —
+
+                                            <?= htmlspecialchars($other_task["status"]) ?>
+
+                                        </label>
+
+                                    </div>
+
+                                <?php endforeach; ?>
+
+                            </div>
+
+                        <?php endif; ?>
+
+                        <div class="help-text">
+                            This task cannot leave "Not Started" until every selected task above is Complete.
                         </div>
 
                     </div>
@@ -857,6 +1187,70 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                                 $task["due_date"] ?? ""
                             ) ?>"
                         >
+
+                    </div>
+
+
+                    <!-- RECURRENCE -->
+
+                    <div class="form-group">
+
+                        <label for="recurrence_type">
+                            Repeats
+                        </label>
+
+                        <select id="recurrence_type" name="recurrence_type">
+                            <?php
+                            $recurrence_labels = [
+                                "none" => "Does Not Repeat",
+                                "daily" => "Daily",
+                                "weekly" => "Weekly",
+                                "monthly" => "Monthly",
+                                "quarterly" => "Quarterly",
+                                "yearly" => "Yearly"
+                            ];
+                            ?>
+                            <?php foreach ($recurrence_labels as $value => $label): ?>
+                                <option value="<?= htmlspecialchars($value) ?>" <?= $task["recurrence_type"] === $value ? "selected" : "" ?>>
+                                    <?= htmlspecialchars($label) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+
+                    </div>
+
+                    <div class="form-group">
+
+                        <label for="recurrence_end_date">
+                            Repeat Until
+                        </label>
+
+                        <input
+                            type="date"
+                            id="recurrence_end_date"
+                            name="recurrence_end_date"
+                            value="<?= htmlspecialchars($task["recurrence_end_date"] ?? "") ?>"
+                        >
+
+                    </div>
+
+                    <div class="form-group">
+
+                        <label for="recurrence_max_occurrences">
+                            Or Max Occurrences
+                        </label>
+
+                        <input
+                            type="number"
+                            id="recurrence_max_occurrences"
+                            name="recurrence_max_occurrences"
+                            min="1"
+                            value="<?= htmlspecialchars((string)($task["recurrence_max_occurrences"] ?? "")) ?>"
+                        >
+
+                        <div class="help-text">
+                            A repeating task needs a due date, and either an end date or a max number of occurrences. The next occurrence is created automatically when this task is marked Complete.
+                        </div>
 
                     </div>
 

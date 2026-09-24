@@ -389,7 +389,8 @@ foreach ($instances as $event) {
                     . formatEventDateTime($start) . ".",
                 "Meetings / Events",
                 $eventId,
-                $notification_url
+                $notification_url,
+                "Event Reminders"
             );
 
             $sentCount++;

@@ -10,10 +10,31 @@ if (!isset($_SESSION["user_id"])) {
 require "db.php";
 require_once "role_helpers.php";
 require_once "notification_helpers.php";
+require_once "task_recurrence_helpers.php";
+require_once "csrf_helpers.php";
+require_once "announcement_helpers.php";
 
 $current_user_id = (int)$_SESSION["user_id"];
 
-if (!isAnyAdministrator($_SESSION["role"])) {
+$me_stmt = $conn->prepare("
+    SELECT role, department
+    FROM users
+    WHERE id = ? AND active = 1
+");
+$me_stmt->bind_param("i", $current_user_id);
+$me_stmt->execute();
+$me = $me_stmt->get_result()->fetch_assoc();
+$me_stmt->close();
+
+if (!$me) {
+    header("Location: login.php");
+    exit;
+}
+
+$current_role = $me["role"];
+$current_department = $me["department"] ?? "";
+
+if (!isAnyAdministrator($current_role)) {
     header("Location: tasks.php");
     exit;
 }
@@ -46,8 +67,8 @@ if ($project_result) {
     while ($row = $project_result->fetch_assoc()) {
         if (
             canAdministerDepartment(
-                $_SESSION["role"],
-                $_SESSION["department"] ?? "",
+                $current_role,
+                $current_department,
                 $row["department"]
             )
         ) {
@@ -82,8 +103,8 @@ if ($project_id > 0) {
     if (
         !$project
         || !canAdministerDepartment(
-            $_SESSION["role"],
-            $_SESSION["department"] ?? "",
+            $current_role,
+            $current_department,
             $project["department"]
         )
     ) {
@@ -121,6 +142,8 @@ $error = "";
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
+    requireValidCsrfToken();
+
     if ($project_id <= 0) {
         $project_id = (int)($_POST["project_id"] ?? 0);
     }
@@ -144,8 +167,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         if (
             $project
             && !canAdministerDepartment(
-                $_SESSION["role"],
-                $_SESSION["department"] ?? "",
+                $current_role,
+                $current_department,
                 $project["department"]
             )
         ) {
@@ -166,6 +189,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     $assigned_users = $_POST["assigned_users"] ?? [];
 
+    $recurrence_type = trim($_POST["recurrence_type"] ?? "none");
+    $recurrence_end_date = trim($_POST["recurrence_end_date"] ?? "");
+    $recurrence_max_occurrences = trim($_POST["recurrence_max_occurrences"] ?? "");
+
 
     /* ---------------------------------------------
        VALIDATION
@@ -178,6 +205,22 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     } elseif ($name === "") {
 
         $error = "Task name is required.";
+
+    } elseif (!in_array($recurrence_type, TASK_RECURRENCE_TYPES, true)) {
+
+        $error = "Invalid recurrence type.";
+
+    } elseif (
+        $recurrence_type !== "none"
+        && $recurrence_end_date === ""
+        && $recurrence_max_occurrences === ""
+    ) {
+
+        $error = "A recurring task needs either an end date or a maximum number of occurrences.";
+
+    } elseif ($recurrence_type !== "none" && $due_date === "") {
+
+        $error = "A recurring task needs a due date to schedule the next occurrence from.";
 
     } else {
 
@@ -228,6 +271,14 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $due_date = null;
         }
 
+        if ($recurrence_type === "none") {
+            $recurrence_end_date = null;
+            $recurrence_max_occurrences = null;
+        } else {
+            $recurrence_end_date = $recurrence_end_date !== "" ? $recurrence_end_date : null;
+            $recurrence_max_occurrences = $recurrence_max_occurrences !== "" ? (int)$recurrence_max_occurrences : null;
+        }
+
 
         /* -----------------------------------------
            INSERT TASK
@@ -243,13 +294,16 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 status,
                 start_date,
                 due_date,
-                completion
+                completion,
+                recurrence_type,
+                recurrence_end_date,
+                recurrence_max_occurrences
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
 
         $stmt->bind_param(
-            "issssssd",
+            "issssssdssi",
             $project_id,
             $name,
             $description,
@@ -257,7 +311,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $status,
             $start_date,
             $due_date,
-            $completion
+            $completion,
+            $recurrence_type,
+            $recurrence_end_date,
+            $recurrence_max_occurrences
         );
 
         if ($stmt->execute()) {
@@ -366,7 +423,7 @@ function e($value)
 
 <title>New Task</title>
 
-<link rel="stylesheet" href="app.css?v=9">
+<link rel="stylesheet" href="app.css?v=22">
 
 </head>
 
@@ -398,10 +455,16 @@ function e($value)
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -410,12 +473,27 @@ function e($value)
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($current_role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($current_role)): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($current_role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
         </div>
         <?php endif; ?>
 
@@ -469,6 +547,8 @@ function e($value)
 
 
             <form method="POST">
+
+                <?= csrfField() ?>
 
 
                 <!-- TASK INFORMATION -->
@@ -676,6 +756,74 @@ function e($value)
 
 
                     </div>
+
+
+                    <div class="form-row">
+
+                        <div class="form-group">
+
+                            <label for="recurrence_type">
+                                Repeats
+                            </label>
+
+                            <select id="recurrence_type" name="recurrence_type">
+                                <?php
+                                $recurrence_labels = [
+                                    "none" => "Does Not Repeat",
+                                    "daily" => "Daily",
+                                    "weekly" => "Weekly",
+                                    "monthly" => "Monthly",
+                                    "quarterly" => "Quarterly",
+                                    "yearly" => "Yearly"
+                                ];
+                                $selected_recurrence = $_POST["recurrence_type"] ?? "none";
+                                ?>
+                                <?php foreach ($recurrence_labels as $value => $label): ?>
+                                    <option value="<?= e($value) ?>" <?= $selected_recurrence === $value ? "selected" : "" ?>>
+                                        <?= e($label) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+
+                        </div>
+
+                        <div class="form-group">
+
+                            <label for="recurrence_end_date">
+                                Repeat Until
+                            </label>
+
+                            <input
+                                type="date"
+                                id="recurrence_end_date"
+                                name="recurrence_end_date"
+                                value="<?= e($_POST["recurrence_end_date"] ?? "") ?>"
+                            >
+
+                        </div>
+
+                        <div class="form-group">
+
+                            <label for="recurrence_max_occurrences">
+                                Or Max Occurrences
+                            </label>
+
+                            <input
+                                type="number"
+                                id="recurrence_max_occurrences"
+                                name="recurrence_max_occurrences"
+                                min="1"
+                                value="<?= e($_POST["recurrence_max_occurrences"] ?? "") ?>"
+                            >
+
+                            <div class="help-text">
+                                A repeating task needs a due date, and either an end date or a max number of occurrences.
+                            </div>
+
+                        </div>
+
+                    </div>
+
 
                 </div>
 

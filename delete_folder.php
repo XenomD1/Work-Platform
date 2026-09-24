@@ -8,6 +8,7 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "csrf_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
 
@@ -278,6 +279,8 @@ $version_count = count($versions);
 $error = "";
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+
+    requireValidCsrfToken();
 
     if (!isset($_POST["confirm_delete"])) {
         $error = "You must confirm permanent deletion.";
@@ -591,6 +594,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         </div>
 
         <form method="POST">
+            <?= csrfField() ?>
 
             <input
                 type="hidden"

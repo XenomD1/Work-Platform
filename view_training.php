@@ -8,6 +8,7 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "announcement_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
 $training_id = isset($_GET["id"]) ? (int)$_GET["id"] : 0;
@@ -149,7 +150,7 @@ function format_time_display($time) {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>View Training</title>
 
-<link rel="stylesheet" href="app.css?v=15">
+<link rel="stylesheet" href="app.css?v=21">
 
 </head>
 
@@ -178,10 +179,16 @@ function format_time_display($time) {
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item active">
             <a href="training.php">Training</a>
@@ -190,12 +197,27 @@ function format_time_display($time) {
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($current_user["role"])): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($current_user["role"])): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($current_user["role"] === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
         </div>
         <?php endif; ?>
 
@@ -218,6 +240,7 @@ function format_time_display($time) {
         </div>
 
         <div class="top-actions">
+            <a class="button" href="comments.php?module=Training&id=<?php echo (int)$training["id"]; ?>">COMMENTS</a>
             <a class="button" href="training.php">BACK TO TRAINING</a>
 
             <?php if ($can_edit): ?>

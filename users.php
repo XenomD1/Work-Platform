@@ -9,28 +9,35 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
-
-if (!isAnyAdministrator($_SESSION["role"])) {
-    die("Access denied.");
-}
+require_once "announcement_helpers.php";
 
 $current_user_id = (int)$_SESSION["user_id"];
 
 $current_user_stmt = $conn->prepare("
-    SELECT department
+    SELECT role, department
     FROM users
-    WHERE id = ?
+    WHERE id = ? AND active = 1
 ");
 $current_user_stmt->bind_param("i", $current_user_id);
 $current_user_stmt->execute();
 $current_user = $current_user_stmt->get_result()->fetch_assoc();
 $current_user_stmt->close();
 
+if (!$current_user) {
+    header("Location: login.php");
+    exit;
+}
+
+if (!isAnyAdministrator($current_user["role"])) {
+    die("Access denied.");
+}
+
+$current_role = $current_user["role"];
 $user_department = $current_user["department"] ?? "";
 
 $users = [];
 
-if ($_SESSION["role"] === "Administrator") {
+if ($current_role === "Administrator") {
 
     $result = $conn->query("
         SELECT
@@ -120,10 +127,16 @@ if ($_SESSION["role"] === "Administrator") {
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -132,12 +145,29 @@ if ($_SESSION["role"] === "Administrator") {
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
+        <?php if (canPostAnnouncements($current_role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($current_role)): ?>
         <div class="sidebar-item active">
             <a href="users.php">User Management</a>
         </div>
+        <?php endif; ?>
+
+        <?php if ($current_role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
+        </div>
+        <?php endif; ?>
 
         <div class="sidebar-bottom">
             <div class="sidebar-item"><a href="account.php">Account</a></div>

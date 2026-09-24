@@ -8,6 +8,9 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "saved_view_helpers.php";
+require_once "csrf_helpers.php";
+require_once "announcement_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
 
@@ -41,6 +44,8 @@ $type_filter = trim($_GET["type"] ?? "");
 $search = trim($_GET["search"] ?? "");
 $page = max(1, (int)($_GET["page"] ?? 1));
 $per_page = 10;
+
+$saved_views = getSavedViews($conn, $user_id, "TimeOff");
 
 /*
  * Time Off Types.
@@ -240,7 +245,7 @@ function buildPageUrl($page_number, $status_filter, $type_filter, $search) {
 
 <title>Time Off</title>
 
-<link rel="stylesheet" href="app.css?v=18">
+<link rel="stylesheet" href="app.css?v=22">
 
 </head>
 
@@ -269,10 +274,16 @@ function buildPageUrl($page_number, $status_filter, $type_filter, $search) {
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -281,12 +292,27 @@ function buildPageUrl($page_number, $status_filter, $type_filter, $search) {
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($role)): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
         </div>
         <?php endif; ?>
 
@@ -389,6 +415,52 @@ function buildPageUrl($page_number, $status_filter, $type_filter, $search) {
         </div>
 
     </form>
+
+    <div class="card" style="margin-bottom:18px;">
+
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <strong>Saved Views:</strong>
+                <?php if (!$saved_views): ?>
+                    <span style="color:var(--slate);">None yet</span>
+                <?php else: ?>
+                    <?php foreach ($saved_views as $view): ?>
+                        <a class="button" href="time_off.php?<?php echo htmlspecialchars($view["query_string"]); ?>"><?php echo htmlspecialchars($view["name"]); ?></a>
+                        <form method="POST" action="saved_view_action.php" style="display:inline;" onsubmit="return confirm('Delete this saved view?');">
+                            <?php echo csrfField(); ?>
+                            <input type="hidden" name="action" value="delete">
+                            <input type="hidden" name="module" value="TimeOff">
+                            <input type="hidden" name="view_id" value="<?php echo (int)$view["id"]; ?>">
+                            <button class="button" type="submit" title="Delete" style="padding:4px 8px;">&times;</button>
+                        </form>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
+
+            <form method="POST" action="saved_view_action.php" id="save_view_form" style="display:flex;gap:8px;align-items:center;">
+                <?php echo csrfField(); ?>
+                <input type="hidden" name="action" value="create">
+                <input type="hidden" name="module" value="TimeOff">
+                <input type="hidden" name="query_string" id="save_view_query_string" value="">
+                <input type="text" name="name" placeholder="Name this view..." maxlength="100" style="width:180px;">
+                <button class="button primary" type="submit">SAVE CURRENT VIEW</button>
+            </form>
+
+        </div>
+
+    </div>
+
+    <script>
+    (function () {
+        var form = document.getElementById("save_view_form");
+        if (!form) return;
+        form.addEventListener("submit", function () {
+            document.getElementById("save_view_query_string").value =
+                window.location.search.replace(/^\?/, "");
+        });
+    })();
+    </script>
 
     <?php if (!$time_off_records): ?>
 

@@ -3,6 +3,7 @@ session_start();
 if (!isset($_SESSION["user_id"])) { header("Location: login.php"); exit; }
 require "db.php";
 require_once "role_helpers.php";
+require_once "announcement_helpers.php";
 $user_id = (int)$_SESSION["user_id"];
 $stmt = $conn->prepare("SELECT id, username, first_name, last_name, email, department, role, active, created_at FROM users WHERE id = ? AND active = 1 LIMIT 1");
 $stmt->bind_param("i", $user_id);
@@ -25,13 +26,22 @@ function e($v){ return htmlspecialchars((string)($v ?? ""), ENT_QUOTES, "UTF-8")
         <div class="sidebar-item"><a href="calendar.php">Calendar</a></div>
         <div class="sidebar-item"><a href="events.php">Meetings / Events</a></div>
         <div class="sidebar-item"><a href="teams.php">Teams</a></div>
+        <div class="sidebar-item"><a href="org_chart.php">Organization Chart</a></div>
         <div class="sidebar-item"><a href="files.php">Files</a></div>
         <div class="sidebar-item"><a href="reports.php">Reports</a></div>
+        <div class="sidebar-item"><a href="analytics.php">Analytics</a></div>
         <div class="sidebar-item"><a href="training.php">Training</a></div>
         <div class="sidebar-item"><a href="time_off.php">Time Off</a></div>
+        <div class="sidebar-item"><a href="timesheets.php">Timesheets</a></div>
         <div class="sidebar-item"><a href="notifications.php">Notifications</a></div>
+        <?php if (canPostAnnouncements($role)): ?>
+            <div class="sidebar-item"><a href="announcements.php">Announcements</a></div>
+        <?php endif; ?>
         <?php if (isAnyAdministrator($role)): ?>
             <div class="sidebar-item"><a href="users.php">User Management</a></div>
+        <?php endif; ?>
+        <?php if ($role === "Administrator"): ?>
+            <div class="sidebar-item"><a href="roles.php">Roles &amp; Permissions</a></div>
         <?php endif; ?>
         <div class="sidebar-bottom">
             <div class="sidebar-item active"><a href="account.php">Account</a></div>

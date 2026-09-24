@@ -8,6 +8,8 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "announcement_helpers.php";
+require_once "csrf_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
 
@@ -17,7 +19,7 @@ $user_id = (int)$_SESSION["user_id"];
 $user_stmt = $conn->prepare("
     SELECT id, first_name, last_name, role, department
     FROM users
-    WHERE id = ?
+    WHERE id = ? AND active = 1
 ");
 
 $user_stmt->bind_param("i", $user_id);
@@ -29,11 +31,13 @@ $current_user = $user_result->fetch_assoc();
 $user_stmt->close();
 
 if (!$current_user) {
-    die("User not found.");
+    header("Location: login.php");
+    exit;
 }
 
 if (!isAnyAdministrator($current_user["role"])) {
-    die("You do not have permission to access this page.");
+    http_response_code(403);
+    exit("You do not have permission to access this page.");
 }
 
 $current_department = $current_user["department"] ?? "";
@@ -42,6 +46,8 @@ $current_department = $current_user["department"] ?? "";
    RESTORE EVENT
 --------------------------------------------------------- */
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["restore_id"])) {
+
+    requireValidCsrfToken();
 
     $restore_id = (int)$_POST["restore_id"];
 
@@ -173,10 +179,16 @@ $stmt->close();
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -185,12 +197,27 @@ $stmt->close();
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($current_user["role"])): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($current_user["role"])): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($current_user["role"] === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
         </div>
         <?php endif; ?>
 
@@ -300,6 +327,7 @@ $stmt->close();
                                 </a>
  
                                 <form method="post" action="deleted_events.php">
+                                    <?= csrfField() ?>
                                     <input
                                         type="hidden"
                                         name="restore_id"

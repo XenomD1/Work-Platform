@@ -8,6 +8,7 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "announcement_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
 
@@ -222,7 +223,7 @@ $can_edit = ((int)$report["created_by"] === $user_id);
 
 <title>View Report</title>
 
-<link rel="stylesheet" href="app.css?v=13">
+<link rel="stylesheet" href="app.css?v=22">
 
 </head>
 
@@ -251,10 +252,16 @@ $can_edit = ((int)$report["created_by"] === $user_id);
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item active">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -263,12 +270,27 @@ $can_edit = ((int)$report["created_by"] === $user_id);
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($role)): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
         </div>
         <?php endif; ?>
 
@@ -295,6 +317,10 @@ $can_edit = ((int)$report["created_by"] === $user_id);
         </div>
 
         <div class="header-actions">
+
+            <a class="button" href="comments.php?module=Report&id=<?php echo (int)$report["id"]; ?>">COMMENTS</a>
+
+            <a class="button" href="print_report.php?id=<?php echo (int)$report["id"]; ?>" target="_blank">PRINT / EXPORT PDF</a>
 
             <a
                 class="button"

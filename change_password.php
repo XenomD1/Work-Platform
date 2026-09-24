@@ -3,6 +3,8 @@ session_start();
 if (!isset($_SESSION["user_id"])) { header("Location: login.php"); exit; }
 require "db.php";
 require_once "role_helpers.php";
+require_once "csrf_helpers.php";
+require_once "announcement_helpers.php";
 $user_id = (int)$_SESSION["user_id"];
 $message = "";
 $stmt = $conn->prepare("SELECT id, password, role FROM users WHERE id = ? AND active = 1 LIMIT 1");
@@ -10,6 +12,7 @@ $stmt->bind_param("i", $user_id); $stmt->execute(); $user = $stmt->get_result()-
 if (!$user) { header("Location: login.php"); exit; }
 $role = $user["role"];
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    requireValidCsrfToken();
     $current_password = $_POST["current_password"] ?? "";
     $new_password = $_POST["new_password"] ?? "";
     $confirm_password = $_POST["confirm_password"] ?? "";
@@ -45,13 +48,22 @@ function e($v){ return htmlspecialchars((string)($v ?? ""), ENT_QUOTES, "UTF-8")
         <div class="sidebar-item"><a href="calendar.php">Calendar</a></div>
         <div class="sidebar-item"><a href="events.php">Meetings / Events</a></div>
         <div class="sidebar-item"><a href="teams.php">Teams</a></div>
+        <div class="sidebar-item"><a href="org_chart.php">Organization Chart</a></div>
         <div class="sidebar-item"><a href="files.php">Files</a></div>
         <div class="sidebar-item"><a href="reports.php">Reports</a></div>
+        <div class="sidebar-item"><a href="analytics.php">Analytics</a></div>
         <div class="sidebar-item"><a href="training.php">Training</a></div>
         <div class="sidebar-item"><a href="time_off.php">Time Off</a></div>
+        <div class="sidebar-item"><a href="timesheets.php">Timesheets</a></div>
         <div class="sidebar-item"><a href="notifications.php">Notifications</a></div>
+        <?php if (canPostAnnouncements($role)): ?>
+            <div class="sidebar-item"><a href="announcements.php">Announcements</a></div>
+        <?php endif; ?>
         <?php if (isAnyAdministrator($role)): ?>
             <div class="sidebar-item"><a href="users.php">User Management</a></div>
+        <?php endif; ?>
+        <?php if ($role === "Administrator"): ?>
+            <div class="sidebar-item"><a href="roles.php">Roles &amp; Permissions</a></div>
         <?php endif; ?>
         <div class="sidebar-bottom">
             <div class="sidebar-item active"><a href="account.php">Account</a></div>
@@ -63,6 +75,7 @@ function e($v){ return htmlspecialchars((string)($v ?? ""), ENT_QUOTES, "UTF-8")
 <?php if ($message !== ""): ?><div class="message error"><?php echo e($message); ?></div><?php endif; ?>
 <div class="card"><div class="card-header"><h2>Password</h2></div><div class="card-body">
 <form method="POST">
+<?php echo csrfField(); ?>
 <div class="form-row"><label for="current_password">Current Password</label><input id="current_password" name="current_password" type="password" required autocomplete="current-password"></div>
 <div class="form-row"><label for="new_password">New Password</label><input id="new_password" name="new_password" type="password" minlength="8" required autocomplete="new-password"><div class="help">Minimum 8 characters.</div></div>
 <div class="form-row"><label for="confirm_password">Confirm New Password</label><input id="confirm_password" name="confirm_password" type="password" minlength="8" required autocomplete="new-password"></div>

@@ -8,6 +8,9 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "saved_view_helpers.php";
+require_once "csrf_helpers.php";
+require_once "announcement_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
 
@@ -45,6 +48,7 @@ $type_filter = trim($_GET["report_type"] ?? "");
 $creator_filter = (int)($_GET["creator"] ?? 0);
 $date_from = trim($_GET["date_from"] ?? "");
 $date_to = trim($_GET["date_to"] ?? "");
+$my_team_only = isset($_GET["my_team"]) && $_GET["my_team"] === "1";
 
 $report_types = [
     "Project Status Report",
@@ -339,6 +343,26 @@ if ($result) {
             continue;
         }
 
+        /*
+         * "My Team's Reports" - reports created by someone on a team
+         * the current user leads, on this report's project. Reuses
+         * the same helpers the Team Lead visibility rule above uses.
+         */
+        if (
+            $my_team_only
+            && !(
+                userLeadsTeamOnProject($conn, $user_id, (int)$report["project_id"])
+                && creatorIsOnLedTeam(
+                    $conn,
+                    $user_id,
+                    (int)$report["created_by"],
+                    (int)$report["project_id"]
+                )
+            )
+        ) {
+            continue;
+        }
+
         if ($search !== "") {
 
             $haystack = strtolower(
@@ -380,6 +404,8 @@ if ($result) {
  * they are allowed to report on.
  */
 $can_create_report = true;
+
+$saved_views = getSavedViews($conn, $user_id, "Reports");
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -389,7 +415,7 @@ $can_create_report = true;
 
 <title>Reports</title>
 
-<link rel="stylesheet" href="app.css?v=13">
+<link rel="stylesheet" href="app.css?v=22">
 
 </head>
 
@@ -418,10 +444,16 @@ $can_create_report = true;
             <a href="teams.php">Teams</a>
         </div>
         <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
+        <div class="sidebar-item">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item active">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -430,12 +462,27 @@ $can_create_report = true;
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($role)): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
         </div>
         <?php endif; ?>
 
@@ -610,6 +657,11 @@ $can_create_report = true;
                 >
             </div>
 
+            <div class="field" style="flex-direction:row;align-items:center;gap:6px;">
+                <input type="checkbox" id="my_team" name="my_team" value="1" style="width:auto;" <?php echo $my_team_only ? "checked" : ""; ?>>
+                <label for="my_team" style="margin:0;">My Team's Reports</label>
+            </div>
+
             <div class="filter-actions">
 
                 <button
@@ -631,6 +683,52 @@ $can_create_report = true;
         </div>
 
     </form>
+
+    <div class="card" style="margin-bottom:18px;">
+
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <strong>Saved Views:</strong>
+                <?php if (!$saved_views): ?>
+                    <span style="color:var(--slate);">None yet</span>
+                <?php else: ?>
+                    <?php foreach ($saved_views as $view): ?>
+                        <a class="button" href="reports.php?<?php echo e($view["query_string"]); ?>"><?php echo e($view["name"]); ?></a>
+                        <form method="POST" action="saved_view_action.php" style="display:inline;" onsubmit="return confirm('Delete this saved view?');">
+                            <?php echo csrfField(); ?>
+                            <input type="hidden" name="action" value="delete">
+                            <input type="hidden" name="module" value="Reports">
+                            <input type="hidden" name="view_id" value="<?php echo (int)$view["id"]; ?>">
+                            <button class="button" type="submit" title="Delete" style="padding:4px 8px;">&times;</button>
+                        </form>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
+
+            <form method="POST" action="saved_view_action.php" id="save_view_form" style="display:flex;gap:8px;align-items:center;">
+                <?php echo csrfField(); ?>
+                <input type="hidden" name="action" value="create">
+                <input type="hidden" name="module" value="Reports">
+                <input type="hidden" name="query_string" id="save_view_query_string" value="">
+                <input type="text" name="name" placeholder="Name this view..." maxlength="100" style="width:180px;">
+                <button class="button primary" type="submit">SAVE CURRENT VIEW</button>
+            </form>
+
+        </div>
+
+    </div>
+
+    <script>
+    (function () {
+        var form = document.getElementById("save_view_form");
+        if (!form) return;
+        form.addEventListener("submit", function () {
+            document.getElementById("save_view_query_string").value =
+                window.location.search.replace(/^\?/, "");
+        });
+    })();
+    </script>
 
     <?php if (!$reports): ?>
 

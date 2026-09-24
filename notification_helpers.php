@@ -8,13 +8,33 @@ function createNotification(
     string $message,
     ?string $related_module = null,
     ?int $related_id = null,
-    ?string $related_url = null
+    ?string $related_url = null,
+    ?string $category = null
 ): bool {
     if ($user_id <= 0) {
         return false;
     }
 
     if (!userCanReceiveNotifications($conn, $user_id)) {
+        return false;
+    }
+
+    /*
+        Notification preferences (Settings > Notification Preferences).
+        Only the categories a user can actually toggle are gated here;
+        a $category is only used when it was passed explicitly (see
+        process_event_reminders.php for "Event Reminders") or when it
+        can be derived from $type (Task/Project/File/Report). Anything
+        else - Team, Training, Mention, and non-reminder Event
+        notifications - is always sent, since there's no preference
+        for it yet.
+    */
+    $effective_category = $category ?? notificationCategoryFromType($type);
+
+    if (
+        $effective_category !== null
+        && !userWantsNotificationCategory($conn, $user_id, $effective_category)
+    ) {
         return false;
     }
 
@@ -72,7 +92,8 @@ function createNotifications(
     string $message,
     ?string $related_module = null,
     ?int $related_id = null,
-    ?string $related_url = null
+    ?string $related_url = null,
+    ?string $category = null
 ): int {
     $created = 0;
     $unique_user_ids = [];
@@ -95,7 +116,8 @@ function createNotifications(
                 $message,
                 $related_module,
                 $related_id,
-                $related_url
+                $related_url,
+                $category
             )
         ) {
             $created++;
@@ -103,6 +125,91 @@ function createNotifications(
     }
 
     return $created;
+}
+
+/*
+ * Maps a notification's $type to a user-facing preference category,
+ * for the types that have one. Returns null for types with no
+ * preference toggle (Team, Training, Mention, and Event - Event
+ * notifications are only gated when process_event_reminders.php
+ * passes the "Event Reminders" category explicitly, since that's the
+ * one recurring/automated nudge, as opposed to a one-time invitation
+ * or organizer assignment).
+ */
+function notificationCategoryFromType(string $type): ?string {
+    switch ($type) {
+        case "Task":
+            return "Task Assignment";
+        case "Project":
+            return "Project Changes";
+        case "File":
+            return "File Activity";
+        case "Report":
+            return "Report Activity";
+        default:
+            return null;
+    }
+}
+
+/*
+ * Whether $user_id currently wants notifications in $category,
+ * per their Settings > Notification Preferences. Falls back to the
+ * documented defaults (Task Assignment/Project Changes/Event
+ * Reminders/Report Activity = On, File Activity = Off) when the user
+ * has no user_preferences row yet.
+ */
+function userWantsNotificationCategory(
+    mysqli $conn,
+    int $user_id,
+    string $category
+): bool {
+    $defaults = [
+        "Task Assignment" => true,
+        "Project Changes" => true,
+        "Event Reminders" => true,
+        "File Activity" => false,
+        "Report Activity" => true,
+    ];
+
+    if (!array_key_exists($category, $defaults)) {
+        return true;
+    }
+
+    switch ($category) {
+        case "Task Assignment":
+            $sql = "SELECT notify_task_assignment AS wants FROM user_preferences WHERE user_id = ? LIMIT 1";
+            break;
+        case "Project Changes":
+            $sql = "SELECT notify_project_changes AS wants FROM user_preferences WHERE user_id = ? LIMIT 1";
+            break;
+        case "Event Reminders":
+            $sql = "SELECT notify_event_reminders AS wants FROM user_preferences WHERE user_id = ? LIMIT 1";
+            break;
+        case "File Activity":
+            $sql = "SELECT notify_file_activity AS wants FROM user_preferences WHERE user_id = ? LIMIT 1";
+            break;
+        case "Report Activity":
+        default:
+            $sql = "SELECT notify_report_activity AS wants FROM user_preferences WHERE user_id = ? LIMIT 1";
+            break;
+    }
+
+    $stmt = $conn->prepare($sql);
+
+    if (!$stmt) {
+        return $defaults[$category];
+    }
+
+    $stmt->bind_param("i", $user_id);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$row) {
+        return $defaults[$category];
+    }
+
+    return (int)$row["wants"] === 1;
 }
 
 function getUnreadNotificationCount(mysqli $conn, int $user_id): int {

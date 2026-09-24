@@ -8,6 +8,8 @@ if (!isset($_SESSION["user_id"])) {
 
 require "db.php";
 require_once "role_helpers.php";
+require_once "announcement_helpers.php";
+require_once "csrf_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
 
@@ -379,6 +381,8 @@ function locationAllowed(
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
+    requireValidCsrfToken();
+
     $name = trim($_POST["name"] ?? "");
     $location_type = trim($_POST["location_type"] ?? "");
     $parent_folder_id = (int)($_POST["parent_folder_id"] ?? 0);
@@ -602,11 +606,17 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         <div class="sidebar-item">
             <a href="teams.php">Teams</a>
         </div>
+        <div class="sidebar-item">
+            <a href="org_chart.php">Organization Chart</a>
+        </div>
         <div class="sidebar-item active">
             <a href="files.php">Files</a>
         </div>
         <div class="sidebar-item">
             <a href="reports.php">Reports</a>
+        </div>
+        <div class="sidebar-item">
+            <a href="analytics.php">Analytics</a>
         </div>
         <div class="sidebar-item">
             <a href="training.php">Training</a>
@@ -615,16 +625,31 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             <a href="time_off.php">Time Off</a>
         </div>
         <div class="sidebar-item">
+            <a href="timesheets.php">Timesheets</a>
+        </div>
+        <div class="sidebar-item">
             <a href="notifications.php">Notifications</a>
         </div>
 
-        <?php if (isAnyAdministrator($_SESSION["role"] ?? "")): ?>
+        <?php if (canPostAnnouncements($role)): ?>
+        <div class="sidebar-item">
+            <a href="announcements.php">Announcements</a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isAnyAdministrator($role)): ?>
         <div class="sidebar-item">
             <a href="users.php">User Management</a>
         </div>
         <?php endif; ?>
 
-        <div class="sidebar-bottom">
+        <?php if ($role === "Administrator"): ?>
+        <div class="sidebar-item">
+            <a href="roles.php">Roles &amp; Permissions</a>
+        </div>
+        <?php endif; ?>
+
+<div class="sidebar-bottom">
         <div class="sidebar-item">
             <a href="account.php">Account</a>
         </div>
@@ -664,6 +689,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     <?php endif; ?>
 
     <form method="POST">
+
+        <?= csrfField() ?>
 
         <div class="card">
             <h2>Folder Information</h2>

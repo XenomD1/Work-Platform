@@ -9,6 +9,7 @@ if (!isset($_SESSION["user_id"])) {
 require "db.php";
 require_once "role_helpers.php";
 require_once "notification_helpers.php";
+require_once "csrf_helpers.php";
 
 $user_id = (int)$_SESSION["user_id"];
 
@@ -211,6 +212,8 @@ foreach ($versions as $version) {
 $error = "";
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+
+    requireValidCsrfToken();
 
     /*
      * Verify the confirmation checkbox.
@@ -558,6 +561,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         </div>
 
         <form method="POST">
+            <?= csrfField() ?>
 
             <input
                 type="hidden"

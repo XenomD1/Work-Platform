@@ -1,10 +1,13 @@
 <?php
 session_start();
 require_once "db.php";
+require_once "csrf_helpers.php";
 
 $message = "";
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+
+    requireValidCsrfToken();
 
     $username = trim($_POST["username"] ?? "");
     $password = $_POST["password"] ?? "";
@@ -140,6 +143,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     <?php endif; ?>
 
     <form method="POST">
+
+        <?= csrfField() ?>
 
         <div class="form-row">
 
